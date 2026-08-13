@@ -294,7 +294,7 @@ async def main():
         return
 
     print("启动 Camoufox 浏览器...")
-    async with AsyncCamoufox(headless=False, proxy=PROXY_CONFIG) as browser:
+    async with AsyncCamoufox(headless=False, proxy=PROXY_CONFIG, geoip=True) as browser:
         for user in users:
             await process_user(user, browser)
 
