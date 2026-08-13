@@ -215,20 +215,25 @@ def process_user(user, browser):
                 send_tg_message(f"⚠️ 续期失败\n用户: {username}\n原因: 确认阶段提示 Captcha 错误")
                 page.close()
                 return
+                return False
                 
             print("✅ 续期请求处理完成。")
             final_path = f"screenshots/{safe_user}_success.png"
             page.get_screenshot(path=final_path)
             send_tg_message(f"✅ 续期尝试完成\n用户: {username}", final_path)
+            return True
             
     except Exception as e:
         print(f"发生异常: {e}")
+        import traceback
+        traceback.print_exc()
         screenshot_path = f"screenshots/{safe_user}_error.png"
         try:
             page.get_screenshot(path=screenshot_path)
         except:
             pass
         send_tg_message(f"❌ 运行异常\n用户: {username}\n原因: {str(e)}", screenshot_path)
+        return False
     finally:
         page.close()
 
@@ -240,7 +245,7 @@ def main():
         users = []
         
     if not users:
-        print("未在 USERS_JSON 中找到用户配置。")
+        print("⚠️ USERS_JSON 未提供或解析失败！")
         return
 
     print("启动 Chromium (DrissionPage)...")
@@ -262,10 +267,24 @@ def main():
     
     browser = Chromium(co)
 
+    failed_users = []
     for user in users:
-        process_user(user, browser)
+        success = process_user(user, browser)
+        if not success:
+            failed_users.append(user.get('username'))
         
     browser.quit()
+    
+    if len(failed_users) == len(users) and len(users) > 0:
+        print("\n❌ 所有账号续期均失败，退出代码 1")
+        import sys
+        sys.exit(1)
+    elif failed_users:
+        print(f"\n⚠️ 部分账号续期失败: {', '.join(failed_users)}")
+        # import sys
+        # sys.exit(1)
+    else:
+        print("\n✅ 所有账号续期成功")
 
 if __name__ == "__main__":
     if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
