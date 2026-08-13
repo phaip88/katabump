@@ -185,36 +185,46 @@ def process_user(user, browser):
 
         print("检查弹窗内是否有 Altcha...")
         try:
-            altcha_widget = page.ele('tag:altcha-widget', timeout=5)
-            if altcha_widget:
-                print("找到了 Altcha 组件，准备点击...")
-                
-                # Dump shadow HTML for debugging
-                try:
-                    shadow_html = page.run_js("return document.querySelector('altcha-widget').shadowRoot.innerHTML")
-                    with open(f"screenshots/{safe_user}_altcha_shadow.html", "w", encoding="utf-8") as f:
-                        f.write(shadow_html)
-                except Exception as ex:
-                    print(f"Dump shadow DOM error: {ex}")
+            altcha_widget = page.ele('css:#renew-modal altcha-widget', timeout=5)
+            if not altcha_widget:
+                altcha_widget = page.ele('tag:altcha-widget', timeout=2) # Fallback
 
-                # Try clicking via DrissionPage Native
-                altcha_widget.click()
+            if altcha_widget:
+                print("找到了 Altcha 组件，等待其可见...")
+                altcha_widget.wait.displayed(timeout=3)
+                print("Altcha 组件准备点击...")
+                
+                # Dump outer HTML
+                try:
+                    outer_html = altcha_widget.html
+                    print(f"Altcha outerHTML: {outer_html[:200]}")
+                except:
+                    pass
+
+                # Try clicking via JS on widget first
+                try:
+                    page.run_js("""
+                        const widget = document.querySelector('#renew-modal altcha-widget') || document.querySelector('altcha-widget');
+                        if (widget) {
+                            if (widget.shadowRoot) {
+                                const cb = widget.shadowRoot.querySelector('input[type="checkbox"]');
+                                if (cb) cb.click();
+                                else widget.click();
+                            } else {
+                                widget.click();
+                            }
+                        }
+                    """)
+                except Exception as ex:
+                    print(f"JS click error: {ex}")
+                
                 time.sleep(1)
                 
-                # Try clicking via JS on widget
-                page.run_js("document.querySelector('altcha-widget').click()")
-                time.sleep(1)
-                
-                # Try clicking inner input
-                page.run_js("""
-                    const widget = document.querySelector('altcha-widget');
-                    if (widget && widget.shadowRoot) {
-                        const cb = widget.shadowRoot.querySelector('input[type="checkbox"]');
-                        if (cb) cb.click();
-                        const label = widget.shadowRoot.querySelector('label');
-                        if (label) label.click();
-                    }
-                """)
+                # Try clicking via DrissionPage Native (with error catch)
+                try:
+                    altcha_widget.click()
+                except Exception as ex:
+                    print(f"DrissionPage Native click error: {ex}")
                 
                 print("已尝试触发 Altcha，等待验证结果 (最大 15 秒)...")
                 for _ in range(15):
@@ -226,7 +236,7 @@ def process_user(user, browser):
             else:
                 print("未发现 Altcha 组件。")
         except Exception as e:
-            print(f"处理 Altcha 发生错误: {e}")
+            print(f"处理 Altcha 发生重大错误: {e}")
 
         ts_passed_in_modal = solve_turnstile(page)
 
