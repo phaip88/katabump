@@ -46,71 +46,72 @@ async def wait_for_turnstile(page):
     except:
         pass
 
-    for _ in range(25):
-        try:
-            x = random.randint(300, 800)
-            y = random.randint(200, 600)
-            await page.mouse.move(x, y, steps=5)
-        except:
-            pass
-
-        try:
-            frames = page.frames
-            for f in frames:
-                if 'cloudflare' in f.url:
-                    await f.evaluate(patch_code)
-            
-            # 通过 JS 查找 iframe 坐标，避免跨域和 frame_locator 的限制
-            box = await page.evaluate('''() => {
-                const getIframe = () => {
-                    let iframe = document.querySelector('iframe[src*="cloudflare.com"]') || document.querySelector('iframe[src*="turnstile"]');
-                    if (iframe) return iframe;
-                    
-                    const tsInputs = document.querySelectorAll('input[name="cf-turnstile-response"]');
-                    for (const input of tsInputs) {
-                        let current = input.parentElement;
-                        for (let i = 0; i < 3; i++) {
-                            if (!current) break;
-                            const frame = current.querySelector('iframe');
-                            if (frame) return frame;
-                            current = current.parentElement;
+    wait_time = 0
+    has_clicked = False
+    
+    while wait_time < 25:
+        if not has_clicked:
+            try:
+                # 仅在第一次循环时进行点击
+                # 通过 JS 查找 iframe 坐标，避免跨域和 frame_locator 的限制
+                box = await page.evaluate('''() => {
+                    const getIframe = () => {
+                        let iframe = document.querySelector('iframe[src*="cloudflare.com"]') || document.querySelector('iframe[src*="turnstile"]');
+                        if (iframe) return iframe;
+                        
+                        const tsInputs = document.querySelectorAll('input[name="cf-turnstile-response"]');
+                        for (const input of tsInputs) {
+                            let current = input.parentElement;
+                            for (let i = 0; i < 3; i++) {
+                                if (!current) break;
+                                const frame = current.querySelector('iframe');
+                                if (frame) return frame;
+                                current = current.parentElement;
+                            }
                         }
+                        return null;
+                    };
+                    
+                    const iframe = getIframe();
+                    if (iframe) {
+                        const rect = iframe.getBoundingClientRect();
+                        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+                    }
+                    
+                    // Fallback 坐标：根据最新截图特征，验证框在邮箱密码输入框正下方
+                    // 固定点击区域中心约莫 (640, 480) 附近，这只是兜底
+                    const passwordInput = document.querySelector('input[type="password"]');
+                    if (passwordInput) {
+                         const pRect = passwordInput.getBoundingClientRect();
+                         return { x: pRect.x, y: pRect.y + 60, width: 300, height: 65 };
                     }
                     return null;
-                };
-                
-                const iframe = getIframe();
-                if (iframe) {
-                    const rect = iframe.getBoundingClientRect();
-                    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-                }
-                
-                // Fallback 坐标：根据最新截图特征，验证框在邮箱密码输入框正下方
-                // 固定点击区域中心约莫 (640, 480) 附近，这只是兜底
-                const passwordInput = document.querySelector('input[type="password"]');
-                if (passwordInput) {
-                     const pRect = passwordInput.getBoundingClientRect();
-                     return { x: pRect.x, y: pRect.y + 60, width: 300, height: 65 };
-                }
-                return null;
-            }''')
+                }''')
 
-            if box and box.get('width', 0) > 0:
-                print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，尝试物理点击...")
-                cx = box['x'] + box['width'] / 2 + random.uniform(-10, 10)
-                cy = box['y'] + box['height'] / 2 + random.uniform(-5, 5)
-                await page.mouse.move(cx, cy, steps=5)
-                await page.mouse.click(cx, cy, delay=random.randint(50, 150))
-            else:
-                print("[Turnstile] 未找到任何可用坐标。")
-                
-                # 随机移动产生熵
-                x = random.randint(300, 800)
-                y = random.randint(200, 600)
-                await page.mouse.move(x, y, steps=3)
-        except Exception as e:
-            print(f"[Turnstile] 交互逻辑出错: {e}")
-
+                if box and box.get('width', 0) > 0:
+                    print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，尝试人类仿生物理点击...")
+                    # 依据 Lunes Host Bypass 指南：切勿使用激进的连击，仅执行一次真正的 down/up
+                    cx = box['x'] + box['width'] / 2 + random.uniform(-5, 5)
+                    cy = box['y'] + box['height'] / 2 + random.uniform(-2, 2)
+                    await page.mouse.move(cx, cy, steps=15)
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                    
+                    await page.mouse.down()
+                    await asyncio.sleep(random.uniform(0.05, 0.15))
+                    await page.mouse.up()
+                    
+                    print("[Turnstile] 单次物理点击完成，移出焦点并进入纯净轮询等待...")
+                    away_x = cx + random.randint(100, 200) * random.choice([1, -1])
+                    away_y = cy + random.randint(100, 200) * random.choice([1, -1])
+                    await page.mouse.move(away_x, away_y, steps=10)
+                    
+                    has_clicked = True
+                else:
+                    # 没获取到坐标，可能是由于延迟加载，本轮跳过，下一次继续尝试找坐标
+                    print("[Turnstile] 当前DOM未就绪，尚未获取可用坐标，延后至下一秒重试...")
+            except Exception as e:
+                print(f"[Turnstile] 交互逻辑出错: {e}")
+        
         val = await page.evaluate("() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]'); return el ? el.value : null; }")
         if val and len(val) > 20:
             print("Turnstile 已自动完成！")
