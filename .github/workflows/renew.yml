@@ -86,6 +86,7 @@ jobs:
           sudo apt-get install -y xvfb
           pip install playwright==1.48.0 camoufox[geoip,playwright]==0.4.11 requests
           playwright install-deps chromium
+          camoufox fetch
 
       - name: Run Renew Script
         env:
@@ -96,6 +97,7 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PYTHONUNBUFFERED: "1"
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" python action_renew.py
 
       - name: Show Proxy Diagnostics
