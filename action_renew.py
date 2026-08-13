@@ -115,14 +115,23 @@ def process_user(user, browser):
 
         login_btn = page.ele('text:Login')
         if login_btn:
-            # 再次检查并填充，以防 Turnstile 验证后表单被重置
-            if email_ele and not email_ele.value:
-                print("⚠️ 邮箱为空，重新输入...")
-                email_ele.input(username, clear=True)
-            if pwd_ele and not pwd_ele.value:
-                print("⚠️ 密码为空，重新输入...")
-                pwd_ele.input(password, clear=True)
-                
+            print("强制填入账号密码...")
+            react_trigger_js = """
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            let emailEl = document.querySelector('input[type="email"]');
+            let pwdEl = document.querySelector('input[type="password"]');
+            
+            if (emailEl) {
+                nativeInputValueSetter.call(emailEl, arguments[0]);
+                emailEl.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (pwdEl) {
+                nativeInputValueSetter.call(pwdEl, arguments[1]);
+                pwdEl.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            """
+            page.run_js(react_trigger_js, username, password)
+            
             print("点击 Login 按钮...")
             login_btn.click()
             time.sleep(3)
@@ -235,7 +244,10 @@ def process_user(user, browser):
         send_tg_message(f"❌ 运行异常\n用户: {username}\n原因: {str(e)}", screenshot_path)
         return False
     finally:
-        page.close()
+        try:
+            page.close()
+        except:
+            pass
 
 def main():
     users_json = os.environ.get('USERS_JSON', '[]')
