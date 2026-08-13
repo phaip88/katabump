@@ -791,55 +791,55 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                 await page.waitForTimeout(500);
 
                 // --- Cloudflare Turnstile Bypass for Login ---
-                console.log('   >> 正在登录前检查 Turnstile (使用 CDP 绕过)...');
-                let cdpClickResult = false;
-                for (let findAttempt = 0; findAttempt < 15; findAttempt++) {
-                    cdpClickResult = await attemptTurnstileCdp(page);
-                    if (cdpClickResult) break;
+                console.log('   >> 正在等待并处理 Turnstile (含获取 token)...');
+                let isTurnstileResolved = false;
+                for (let findAttempt = 0; findAttempt < 20; findAttempt++) {
+                    const token = await page.evaluate(() => {
+                        const input = document.querySelector('input[name="cf-turnstile-response"]');
+                        return input ? input.value : null;
+                    });
+                    if (token && token.length > 20) {
+                        console.log('   >> 登录前成功获取到 Turnstile Token:', token.substring(0, 10) + '...');
+                        isTurnstileResolved = true;
+                        break;
+                    }
+                    await attemptTurnstileCdp(page);
                     await page.waitForTimeout(1000);
                 }
-
-                if (cdpClickResult) {
-                    console.log('   >> 登录 CDP 点击生效。正在等待最多 10秒 Cloudflare 成功标志...');
-                    for (let waitSec = 0; waitSec < 10; waitSec++) {
-                        const frames = page.frames();
-                        let isSuccess = false;
-                        for (const f of frames) {
-                            if (f.url().includes('cloudflare')) {
-                                try {
-                                    if (await f.getByText('Success!', { exact: false }).isVisible({ timeout: 500 })) {
-                                        isSuccess = true;
-                                        break;
-                                    }
-                                } catch (e) { }
-                            }
-                        }
-                        if (isSuccess) {
-                            console.log('   >> 登录前 Turnstile 验证成功。');
-                            break;
-                        }
-                        await page.waitForTimeout(1000);
-                    }
-                } else {
-                    console.log('   >> 登录前未检测到或未点击 Turnstile，继续操作...');
+                
+                if (!isTurnstileResolved) {
+                    console.log('   >> 登录前未检测到有效的 Turnstile Token，可能需要强制登录或盾无需交互...');
                 }
                 // --------------------------------------------
 
                 await page.getByRole('button', { name: 'Login', exact: true }).click();
+                await page.waitForTimeout(2000);
 
-                // User Request: Check for incorrect password
+                // User Request: Check for incorrect password or captcha
                 try {
                     const errorMsg = page.getByText('Incorrect password or no account');
-        if (await errorMsg.isVisible({ timeout: 3000 })) {
-          console.error(` >> ❌ 登录失败: 用户 ${user.username} 账号或密码错误`);
-          const failPhotoDir = path.join(process.cwd(), 'screenshots');
-          if (!fs.existsSync(failPhotoDir)) fs.mkdirSync(failPhotoDir, { recursive: true });
-          const failSafeName = user.username.replace(/[^a-z0-9]/gi, '_');
-          const failShotPath = path.join(failPhotoDir, `${failSafeName}_login_fail.png`);
-          try { await page.screenshot({ path: failShotPath, fullPage: true }); } catch (e) { }
+                    const captchaError = page.getByText('Please complete captcha');
+                    if (await errorMsg.isVisible({ timeout: 2000 })) {
+                        console.error(` >> ❌ 登录失败: 用户 ${user.username} 账号或密码错误`);
+                        const failPhotoDir = path.join(process.cwd(), 'screenshots');
+                        if (!fs.existsSync(failPhotoDir)) fs.mkdirSync(failPhotoDir, { recursive: true });
+                        const failSafeName = user.username.replace(/[^a-z0-9]/gi, '_');
+                        const failShotPath = path.join(failPhotoDir, `${failSafeName}_login_fail.png`);
+                        try { await page.screenshot({ path: failShotPath, fullPage: true }); } catch (e) { }
 
-          telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${user.username}\n原因: 账号或密码错误`, failShotPath)) || telegramNotified;
+                        telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${user.username}\n原因: 账号或密码错误`, failShotPath)) || telegramNotified;
+                        continue;
+                    }
+                    
+                    if (await captchaError.isVisible({ timeout: 2000 })) {
+                        console.error(` >> ❌ 登录失败: 用户 ${user.username} 需要过盾 (Please complete captcha.)`);
+                        const failPhotoDir = path.join(process.cwd(), 'screenshots');
+                        if (!fs.existsSync(failPhotoDir)) fs.mkdirSync(failPhotoDir, { recursive: true });
+                        const failSafeName = user.username.replace(/[^a-z0-9]/gi, '_');
+                        const failShotPath = path.join(failPhotoDir, `${failSafeName}_captcha_fail.png`);
+                        try { await page.screenshot({ path: failShotPath, fullPage: true }); } catch (e) { }
 
+                        telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${user.username}\n原因: Turnstile 验证未通过`, failShotPath)) || telegramNotified;
                         continue;
                     }
                 } catch (e) { }

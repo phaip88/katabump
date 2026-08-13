@@ -360,48 +360,36 @@ async function attemptTurnstileCdp(page) {
                 await page.waitForTimeout(500);
 
                 // --- Cloudflare Turnstile Bypass for Login ---
-                console.log('   >> Checking for Turnstile before login (using CDP bypass)...');
-                let cdpClickResult = false;
-                for (let findAttempt = 0; findAttempt < 15; findAttempt++) {
-                    cdpClickResult = await attemptTurnstileCdp(page);
-                    if (cdpClickResult) break;
-                    // console.log(`   >> [Login Find Attempt ${findAttempt + 1}/15] Turnstile checkbox not found yet...`);
+                console.log('   >> Waiting and handling Turnstile (including token polling)...');
+                let isTurnstileResolved = false;
+                for (let findAttempt = 0; findAttempt < 20; findAttempt++) {
+                    const token = await page.evaluate(() => {
+                        const input = document.querySelector('input[name="cf-turnstile-response"]');
+                        return input ? input.value : null;
+                    });
+                    if (token && token.length > 20) {
+                        console.log('   >> Successfully acquired Turnstile Token:', token.substring(0, 10) + '...');
+                        isTurnstileResolved = true;
+                        break;
+                    }
+                    await attemptTurnstileCdp(page);
+                    // console.log(`   >> [Login Find Attempt ${findAttempt + 1}/20] Poll token and Turnstile checkbox...`);
                     await page.waitForTimeout(1000);
                 }
 
-                if (cdpClickResult) {
-                    console.log('   >> CDP Click active for login. Waiting up to 10s for Cloudflare success...');
-                    // Wait for the "Success!" mark in any cloudflare frame
-                    for (let waitSec = 0; waitSec < 10; waitSec++) {
-                        const frames = page.frames();
-                        let isSuccess = false;
-                        for (const f of frames) {
-                            if (f.url().includes('cloudflare')) {
-                                try {
-                                    if (await f.getByText('Success!', { exact: false }).isVisible({ timeout: 500 })) {
-                                        isSuccess = true;
-                                        break;
-                                    }
-                                } catch (e) { }
-                            }
-                        }
-                        if (isSuccess) {
-                            console.log('   >> Turnstile verification successful before login.');
-                            break;
-                        }
-                        await page.waitForTimeout(1000);
-                    }
-                } else {
-                    console.log('   >> No Turnstile detected or clicked before login, proceeding anyway...');
+                if (!isTurnstileResolved) {
+                    console.log('   >> No valid Turnstile Token detected before login, will try to force login or it is non-interactive...');
                 }
                 // --------------------------------------------
 
                 await page.getByRole('button', { name: 'Login', exact: true }).click();
+                await page.waitForTimeout(2000);
 
-                // User Request: Check for "Incorrect password or no account"
+                // User Request: Check for "Incorrect password or no account" and "Please complete captcha"
                 try {
                     const errorMsg = page.getByText('Incorrect password or no account');
-                    if (await errorMsg.isVisible({ timeout: 3000 })) {
+                    const captchaError = page.getByText('Please complete captcha');
+                    if (await errorMsg.isVisible({ timeout: 2000 })) {
                         console.error(`   >> ❌ Login failed: Incorrect password or no account for user ${user.username}`);
 
                         // Screenshot for login failure
@@ -410,6 +398,15 @@ async function attemptTurnstileCdp(page) {
                         try { await page.screenshot({ path: path.join(photoDir, `${user.username}.png`), fullPage: true }); } catch (e) { }
 
                         // Skip to next user
+                        continue;
+                    }
+
+                    if (await captchaError.isVisible({ timeout: 2000 })) {
+                        console.error(`   >> ❌ Login failed: Captcha required (Please complete captcha) for user ${user.username}`);
+                        const photoDir = path.join(__dirname, 'photo');
+                        if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
+                        try { await page.screenshot({ path: path.join(photoDir, `${user.username}_captcha_fail.png`), fullPage: true }); } catch (e) { }
+                        
                         continue;
                     }
                 } catch (e) { }
