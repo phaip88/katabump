@@ -79,6 +79,21 @@ jobs:
 
           echo "sing-box started successfully (PID=${SINGBOX_PID})."
 
+      - name: Verify Proxy IP
+        env:
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+        run: |
+          if [ -n "$PROXY_URL" ]; then
+            echo "Testing proxy connection..."
+            IP=$(curl -s --proxy http://127.0.0.1:8080 http://api.ipify.org || echo "FAILED")
+            echo "Proxy Exit IP: $IP"
+            if [ "$IP" = "FAILED" ] || [ -z "$IP" ]; then
+              echo "Proxy failed to route traffic!"
+              cat singbox.log || true
+              exit 1
+            fi
+          fi
+
       - name: Install Dependencies
         run: |
           set -euo pipefail
