@@ -27,16 +27,46 @@ def send_tg_message(text, photo_path=None):
         print(f"TG notification failed: {e}")
 
 async def wait_for_turnstile(page):
-    print("等待 Turnstile 验证 (增加鼠标熵以加速通过)...")
+    print("等待 Turnstile 验证 (注入真实补丁并点击 iframe)...")
+    patch_code = """
+    (() => {
+        if (window.__patched_mouse) return;
+        window.__patched_mouse = true;
+        Object.defineProperty(MouseEvent.prototype, 'screenX', {
+            get: function() { return (this.clientX || 0) + (window.screenX || 0) + Math.floor(Math.random()*10); }
+        });
+        Object.defineProperty(MouseEvent.prototype, 'screenY', {
+            get: function() { return (this.clientY || 0) + (window.screenY || 0) + Math.floor(Math.random()*10); }
+        });
+    })();
+    """
+    await page.add_init_script(patch_code)
+    try:
+        await page.evaluate(patch_code)
+    except:
+        pass
+
     for _ in range(25):
         try:
             x = random.randint(300, 800)
             y = random.randint(200, 600)
             await page.mouse.move(x, y, steps=5)
-            if random.random() > 0.6:
-                await page.mouse.down()
-                await asyncio.sleep(random.uniform(0.05, 0.15))
-                await page.mouse.up()
+        except:
+            pass
+
+        try:
+            frames = page.frames
+            for f in frames:
+                if 'cloudflare' in f.url:
+                    await f.evaluate(patch_code)
+            
+            cf_iframe = page.frame_locator('iframe[src*="cloudflare"]').locator('body')
+            if await cf_iframe.count() > 0:
+                await cf_iframe.first.click(force=True, delay=random.randint(50, 150))
+                # 尝试点击里面的复选框
+                checkbox = page.frame_locator('iframe[src*="cloudflare"]').locator('input[type="checkbox"]')
+                if await checkbox.count() > 0:
+                    await checkbox.first.click(force=True)
         except:
             pass
 
