@@ -20,7 +20,7 @@ import os
 import sys
 import json
 import base64
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, parse_qsl, urlencode, unquote
 
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8080
@@ -59,6 +59,66 @@ def parse_http(parsed):
     if parsed.scheme == "https":
         outbound["tls"] = {"enabled": True}
     return outbound
+
+
+def get_param(params, name, default=""):
+    """Return a query parameter with case-insensitive key compatibility."""
+    wanted = name.lower()
+    for key, values in params.items():
+        if key.lower() == wanted and values:
+            return values[0]
+    return default
+
+
+def normalize_ws_path_and_early_data(raw_path, params):
+    """Normalize a WebSocket path and extract Xray-style early-data options.
+
+    Supported share-link forms:
+      path=/ws?ed=2560
+      path=/ws&ed=2560 (seen in some exported links after decoding)
+      path=/ws&ed=2560 as an encoded path value
+      path=/ws&ed=2560 plus a top-level ed=2560 parameter
+    """
+    path = unquote(raw_path or "").strip() or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+
+    early_data = get_param(params, "ed", "").strip()
+    header_name = (
+        get_param(params, "eh", "")
+        or get_param(params, "early_data_header_name", "")
+        or "Sec-WebSocket-Protocol"
+    ).strip()
+
+    if "?" in path:
+        base_path, raw_query = path.split("?", 1)
+        remaining = []
+        for key, value in parse_qsl(raw_query, keep_blank_values=True):
+            if key.lower() == "ed" and not early_data:
+                early_data = value
+            else:
+                remaining.append((key, value))
+        path = base_path or "/"
+        if remaining:
+            path += "?" + urlencode(remaining, doseq=True)
+
+    # Compatibility with exports that append '&ed=N' without a '?' inside path.
+    legacy_parts = path.rsplit("&ed=", 1)
+    if len(legacy_parts) == 2 and legacy_parts[1].isdigit():
+        path = legacy_parts[0] or "/"
+        if not early_data:
+            early_data = legacy_parts[1]
+
+    max_early_data = 0
+    if early_data:
+        try:
+            max_early_data = int(early_data)
+            if not 0 <= max_early_data <= 65535:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError(f"Invalid VLESS WebSocket early data value: {early_data!r}") from exc
+
+    return path, max_early_data, header_name
 
 
 def parse_vless(parsed, params):
@@ -109,15 +169,22 @@ def parse_vless(parsed, params):
         outbound["tls"] = tls
 
     # Transport
-    net_type = params.get("type", [""])[0]
+    net_type = get_param(params, "type", "").lower()
     if net_type == "ws":
-        transport = {"type": "ws"}
-        path = params.get("path", [""])[0]
-        if path:
-            transport["path"] = unquote(path)
-        host = params.get("host", [""])[0]
+        raw_path = get_param(params, "path", "/")
+        path, max_early_data, early_data_header_name = normalize_ws_path_and_early_data(
+            raw_path, params
+        )
+        transport = {"type": "ws", "path": path}
+
+        host = get_param(params, "host", "").strip()
         if host:
             transport["headers"] = {"Host": host}
+
+        if max_early_data:
+            transport["max_early_data"] = max_early_data
+            transport["early_data_header_name"] = early_data_header_name
+
         outbound["transport"] = transport
     elif net_type == "grpc":
         transport = {"type": "grpc"}
@@ -317,6 +384,16 @@ def main():
     print(f"sing-box config.json generated.")
     print(f"  Inbound: http://{LISTEN_HOST}:{LISTEN_PORT}")
     print(f"  Outbound: {outbound['type']} -> {server}:{port}")
+    if outbound.get("type") == "vless":
+        tls = outbound.get("tls", {})
+        transport = outbound.get("transport", {})
+        headers = transport.get("headers", {})
+        print(f"  TLS SNI: {tls.get('server_name', '(default)')}")
+        print(f"  Transport: {transport.get('type', 'tcp')}")
+        if transport.get("type") == "ws":
+            print(f"  WS Host: {headers.get('Host', '(default)')}")
+            print(f"  WS Path: {transport.get('path', '/')}")
+            print(f"  WS Early Data: {transport.get('max_early_data', 0)}")
 
 
 if __name__ == "__main__":

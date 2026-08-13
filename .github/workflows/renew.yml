@@ -50,6 +50,9 @@ jobs:
           mv "sing-box-${SINGBOX_VER}-linux-${SINGBOX_ARCH}/sing-box" ./sing-box
           chmod +x ./sing-box
 
+          echo "Running proxy parser tests..."
+          python3 -m unittest discover -s tests -v
+
           echo "Generating sing-box config from PROXY_URL..."
           python3 proxy_handler.py
 
