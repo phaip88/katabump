@@ -115,22 +115,14 @@ def process_user(user, browser):
 
         login_btn = page.ele('text:Login')
         if login_btn:
-            print("强制填入账号密码...")
-            react_trigger_js = """
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-            let emailEl = document.querySelector('input[type="email"]');
-            let pwdEl = document.querySelector('input[type="password"]');
+            print("尝试通过 input 输入账号密码...")
+            user_input = page.ele('css:input[name="email"]')
+            if user_input:
+                user_input.input(username, clear=True)
             
-            if (emailEl) {
-                nativeInputValueSetter.call(emailEl, arguments[0]);
-                emailEl.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            if (pwdEl) {
-                nativeInputValueSetter.call(pwdEl, arguments[1]);
-                pwdEl.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            """
-            page.run_js(react_trigger_js, username, password)
+            pwd_input = page.ele('css:input[name="password"]')
+            if pwd_input:
+                pwd_input.input(password, clear=True)
             
             print("点击 Login 按钮...")
             login_btn.click()
