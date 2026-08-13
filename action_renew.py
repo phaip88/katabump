@@ -52,9 +52,8 @@ async def wait_for_turnstile(page):
     while wait_time < 25:
         if not has_clicked:
             try:
-                # 仅在第一次循环时进行点击
-                # 通过 JS 查找 iframe 坐标，避免跨域和 frame_locator 的限制
-                box = await page.evaluate('''() => {
+                # 使用 asyncio.wait_for 防止 CF 死锁浏览器主线程导致一直挂起
+                box = await asyncio.wait_for(page.evaluate('''() => {
                     const getIframe = () => {
                         let iframe = document.querySelector('iframe[src*="cloudflare.com"]') || document.querySelector('iframe[src*="turnstile"]');
                         if (iframe) return iframe;
@@ -86,36 +85,55 @@ async def wait_for_turnstile(page):
                          return { x: pRect.x, y: pRect.y + 60, width: 300, height: 65 };
                     }
                     return null;
-                }''')
+                }'''), timeout=5.0)
 
                 if box and box.get('width', 0) > 0:
-                    print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，尝试人类仿生物理点击...")
-                    # 依据 Lunes Host Bypass 指南：切勿使用激进的连击，仅执行一次真正的 down/up
+                    print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，执行多段仿生游走...")
                     cx = box['x'] + box['width'] / 2 + random.uniform(-5, 5)
                     cy = box['y'] + box['height'] / 2 + random.uniform(-2, 2)
-                    await page.mouse.move(cx, cy, steps=15)
+                    
+                    # 打破直线：生成 2 个中间途经点
+                    start_x, start_y = random.randint(100, 300), random.randint(100, 300)
+                    await asyncio.wait_for(page.mouse.move(start_x, start_y, steps=5), timeout=2.0)
+                    
+                    mid_x = (start_x + cx) / 2 + random.randint(-50, 50)
+                    mid_y = (start_y + cy) / 2 + random.randint(-50, 50)
+                    await asyncio.wait_for(page.mouse.move(mid_x, mid_y, steps=10), timeout=2.0)
+                    
+                    await asyncio.wait_for(page.mouse.move(cx, cy, steps=10), timeout=2.0)
                     await asyncio.sleep(random.uniform(0.1, 0.3))
                     
-                    await page.mouse.down()
+                    await asyncio.wait_for(page.mouse.down(), timeout=2.0)
                     await asyncio.sleep(random.uniform(0.05, 0.15))
-                    await page.mouse.up()
+                    await asyncio.wait_for(page.mouse.up(), timeout=2.0)
                     
                     print("[Turnstile] 单次物理点击完成，移出焦点并进入纯净轮询等待...")
                     away_x = cx + random.randint(100, 200) * random.choice([1, -1])
                     away_y = cy + random.randint(100, 200) * random.choice([1, -1])
-                    await page.mouse.move(away_x, away_y, steps=10)
+                    await asyncio.wait_for(page.mouse.move(away_x, away_y, steps=10), timeout=2.0)
                     
                     has_clicked = True
                 else:
                     # 没获取到坐标，可能是由于延迟加载，本轮跳过，下一次继续尝试找坐标
                     print("[Turnstile] 当前DOM未就绪，尚未获取可用坐标，延后至下一秒重试...")
+            except asyncio.TimeoutError:
+                print("[Turnstile] 获取坐标或执行鼠标动作时发生严重挂起 (TimeoutError)！")
             except Exception as e:
                 print(f"[Turnstile] 交互逻辑出错: {e}")
         
-        val = await page.evaluate("() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]'); return el ? el.value : null; }")
-        if val and len(val) > 20:
-            print("Turnstile 已自动完成！")
-            return True
+        try:
+            val = await asyncio.wait_for(
+                page.evaluate("() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]'); return el ? el.value : null; }"),
+                timeout=3.0
+            )
+            if val and len(val) > 20:
+                print("Turnstile 已自动完成！")
+                return True
+        except asyncio.TimeoutError:
+            print("[Turnstile] 检查 Token 时浏览器主线程无响应 (TimeoutError)...")
+        except Exception:
+            pass
+        
         await asyncio.sleep(1)
     return False
 
