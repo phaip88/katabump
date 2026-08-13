@@ -134,6 +134,8 @@ def process_user(user, browser):
             print("未找到 See 按钮，可能登录未成功。")
             screenshot_path = f"screenshots/{safe_user}_see_not_found.png"
             page.get_screenshot(path=screenshot_path)
+            with open(f"screenshots/{safe_user}_page.html", "w", encoding="utf-8") as f:
+                f.write(page.html)
             send_tg_message(f"⚠️ 处理未完成\n用户: {username}\n原因: 未找到 See 链接", screenshot_path)
             page.close()
             return
