@@ -60,26 +60,40 @@ async def wait_for_turnstile(page):
                 if 'cloudflare' in f.url:
                     await f.evaluate(patch_code)
             
-            iframe_element = page.locator('iframe[src*="cloudflare"]')
-            count = await iframe_element.count()
-            if count > 0:
-                print(f"[Turnstile] 找到 {count} 个 cloudflare iframe，尝试进入交互...")
-                try:
-                    cf_frame = page.frame_locator('iframe[src*="cloudflare"]').first
-                    await cf_frame.locator('body').click(force=True, delay=random.randint(50, 150), timeout=2000)
-                    
-                    checkbox = cf_frame.locator('input[type="checkbox"]')
-                    if await checkbox.count() > 0:
-                        print("[Turnstile] 找到内部 checkbox，尝试强制点击...")
-                        await checkbox.first.click(force=True, timeout=2000)
-                    else:
-                        print("[Turnstile] 未找到内部 checkbox，执行默认坐标移动。")
-                except Exception as inner_e:
-                    print(f"[Turnstile] 点击 iframe 内容时出错: {inner_e}")
+            # 通过 JS 查找 iframe 坐标，避免跨域和 frame_locator 的限制
+            box = await page.evaluate('''() => {
+                let iframe = document.querySelector('iframe[src*="cloudflare.com"]') || document.querySelector('iframe[src*="turnstile"]');
+                if (!iframe) {
+                    const tsInput = document.querySelector('input[name="cf-turnstile-response"]');
+                    if (tsInput && tsInput.parentElement) {
+                        iframe = tsInput.parentElement.querySelector('iframe');
+                        if (!iframe && tsInput.parentElement.shadowRoot) {
+                            iframe = tsInput.parentElement.shadowRoot.querySelector('iframe');
+                        }
+                    }
+                }
+                if (iframe) {
+                    const rect = iframe.getBoundingClientRect();
+                    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+                }
+                return null;
+            }''')
+
+            if box and box.get('width', 0) > 0:
+                print(f"[Turnstile] JS 成功获取到 iframe 坐标: {box}，尝试物理点击...")
+                cx = box['x'] + box['width'] / 2 + random.uniform(-10, 10)
+                cy = box['y'] + box['height'] / 2 + random.uniform(-5, 5)
+                await page.mouse.move(cx, cy, steps=5)
+                await page.mouse.click(cx, cy, delay=random.randint(50, 150))
             else:
-                print("[Turnstile] 未找到 cloudflare iframe，页面可能正在加载。")
+                print("[Turnstile] 未找到 cloudflare iframe，页面可能正在加载或处于无感知模式。")
+                
+                # 随机移动产生熵
+                x = random.randint(300, 800)
+                y = random.randint(200, 600)
+                await page.mouse.move(x, y, steps=3)
         except Exception as e:
-            print(f"[Turnstile] iframe 检测外层出错: {e}")
+            print(f"[Turnstile] 交互逻辑出错: {e}")
 
         val = await page.evaluate("() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]'); return el ? el.value : null; }")
         if val and len(val) > 20:
