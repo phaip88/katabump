@@ -62,31 +62,47 @@ async def wait_for_turnstile(page):
             
             # 通过 JS 查找 iframe 坐标，避免跨域和 frame_locator 的限制
             box = await page.evaluate('''() => {
-                let iframe = document.querySelector('iframe[src*="cloudflare.com"]') || document.querySelector('iframe[src*="turnstile"]');
-                if (!iframe) {
-                    const tsInput = document.querySelector('input[name="cf-turnstile-response"]');
-                    if (tsInput && tsInput.parentElement) {
-                        iframe = tsInput.parentElement.querySelector('iframe');
-                        if (!iframe && tsInput.parentElement.shadowRoot) {
-                            iframe = tsInput.parentElement.shadowRoot.querySelector('iframe');
+                const getIframe = () => {
+                    let iframe = document.querySelector('iframe[src*="cloudflare.com"]') || document.querySelector('iframe[src*="turnstile"]');
+                    if (iframe) return iframe;
+                    
+                    const tsInputs = document.querySelectorAll('input[name="cf-turnstile-response"]');
+                    for (const input of tsInputs) {
+                        let current = input.parentElement;
+                        for (let i = 0; i < 3; i++) {
+                            if (!current) break;
+                            const frame = current.querySelector('iframe');
+                            if (frame) return frame;
+                            current = current.parentElement;
                         }
                     }
-                }
+                    return null;
+                };
+                
+                const iframe = getIframe();
                 if (iframe) {
                     const rect = iframe.getBoundingClientRect();
                     return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+                }
+                
+                // Fallback 坐标：根据最新截图特征，验证框在邮箱密码输入框正下方
+                // 固定点击区域中心约莫 (640, 480) 附近，这只是兜底
+                const passwordInput = document.querySelector('input[type="password"]');
+                if (passwordInput) {
+                     const pRect = passwordInput.getBoundingClientRect();
+                     return { x: pRect.x, y: pRect.y + 60, width: 300, height: 65 };
                 }
                 return null;
             }''')
 
             if box and box.get('width', 0) > 0:
-                print(f"[Turnstile] JS 成功获取到 iframe 坐标: {box}，尝试物理点击...")
+                print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，尝试物理点击...")
                 cx = box['x'] + box['width'] / 2 + random.uniform(-10, 10)
                 cy = box['y'] + box['height'] / 2 + random.uniform(-5, 5)
                 await page.mouse.move(cx, cy, steps=5)
                 await page.mouse.click(cx, cy, delay=random.randint(50, 150))
             else:
-                print("[Turnstile] 未找到 cloudflare iframe，页面可能正在加载或处于无感知模式。")
+                print("[Turnstile] 未找到任何可用坐标。")
                 
                 # 随机移动产生熵
                 x = random.randint(300, 800)
