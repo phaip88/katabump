@@ -2,8 +2,8 @@ name: Katabump Auto Renew
 
 on:
   schedule:
-  # 每天 UTC 0点 (北京时间 8点) 运行
-  - cron: '0 0 * * *'
+    # 每天 UTC 0点 (北京时间 8点) 运行
+    - cron: '0 0 * * *'
   workflow_dispatch: # 允许手动触发
 
 jobs:
@@ -11,59 +11,117 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Start Proxy (sing-box)
-      env:
-        PROXY_URL: ${{ secrets.PROXY_URL }}
-      run: |
-        if [ -z "$PROXY_URL" ]; then
-          echo "PROXY_URL not set, skipping sing-box setup."
-          exit 0
-        fi
-        SINGBOX_VER="1.11.0"
-        echo "Downloading sing-box v${SINGBOX_VER}..."
-        wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VER}/sing-box-${SINGBOX_VER}-linux-amd64.tar.gz"
-        tar -xzf "sing-box-${SINGBOX_VER}-linux-amd64.tar.gz"
-        mv "sing-box-${SINGBOX_VER}-linux-amd64/sing-box" ./sing-box
-        chmod +x ./sing-box
-        echo "Generating sing-box config from PROXY_URL..."
-        python proxy_handler.py
-        echo "Starting sing-box..."
-        nohup ./sing-box run -c config.json > singbox.log 2>&1 &
-        sleep 3
-        echo "sing-box started. PROXY_URL will be passed to action_renew.js."
+      - name: Start Proxy (sing-box)
+        env:
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+        run: |
+          set -euo pipefail
 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y xvfb
-        npm install
-        npx playwright install-deps chrome
+          if [ -z "$PROXY_URL" ]; then
+            echo "PROXY_URL not set, skipping sing-box setup."
+            exit 0
+          fi
 
-    - name: Run Renew Script
-      env:
-        USERS_JSON: ${{ secrets.USERS_JSON }}
-        HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
-        PROXY_URL: ${{ secrets.PROXY_URL }}
-        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        GITHUB_EVENT_NAME: ${{ github.event_name }}
-      run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
+          SINGBOX_VER="1.11.0"
+          ARCH="$(dpkg --print-architecture)"
+          case "$ARCH" in
+            amd64) SINGBOX_ARCH="amd64" ;;
+            arm64) SINGBOX_ARCH="arm64" ;;
+            *) echo "Unsupported runner architecture: $ARCH"; exit 1 ;;
+          esac
 
-    - name: Upload Screenshots
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: screenshots
-        path: screenshots/
+          ARCHIVE="sing-box-${SINGBOX_VER}-linux-${SINGBOX_ARCH}.tar.gz"
+          echo "Downloading sing-box v${SINGBOX_VER} for ${SINGBOX_ARCH}..."
+          wget --https-only --tries=3 --timeout=30 \
+            "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VER}/${ARCHIVE}"
+          tar -xzf "$ARCHIVE"
+          mv "sing-box-${SINGBOX_VER}-linux-${SINGBOX_ARCH}/sing-box" ./sing-box
+          chmod +x ./sing-box
+
+          echo "Generating sing-box config from PROXY_URL..."
+          python3 proxy_handler.py
+
+          echo "Checking sing-box config..."
+          ./sing-box check -c config.json
+
+          echo "Starting sing-box..."
+          nohup ./sing-box run -c config.json >singbox.log 2>&1 &
+          SINGBOX_PID=$!
+          echo "$SINGBOX_PID" >singbox.pid
+          sleep 3
+
+          if ! kill -0 "$SINGBOX_PID" 2>/dev/null; then
+            echo "sing-box exited unexpectedly."
+            cat singbox.log || true
+            exit 1
+          fi
+
+          if ! timeout 5 bash -c '</dev/tcp/127.0.0.1/8080'; then
+            echo "sing-box is running but port 8080 is not accepting connections."
+            cat singbox.log || true
+            exit 1
+          fi
+
+          echo "sing-box started successfully (PID=${SINGBOX_PID})."
+
+      - name: Install Dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          npm ci --no-audit --no-fund
+          npx playwright install-deps chrome
+
+      - name: Run Renew Script
+        env:
+          USERS_JSON: ${{ secrets.USERS_JSON }}
+          HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+          PROXY_TEST_URLS: ${{ vars.PROXY_TEST_URLS }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
+
+      - name: Show Proxy Diagnostics
+        if: always()
+        run: |
+          echo "===== sing-box process ====="
+          if [ -f singbox.pid ]; then
+            ps -fp "$(cat singbox.pid)" || true
+          else
+            echo "singbox.pid not found"
+          fi
+
+          echo "===== port 8080 ====="
+          ss -lntp | grep ':8080' || true
+
+          echo "===== sing-box log ====="
+          if [ -f singbox.log ]; then
+            cat singbox.log
+          else
+            echo "singbox.log not found"
+          fi
+
+      - name: Upload Diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: katabump-diagnostics-${{ github.run_id }}
+          path: |
+            screenshots/
+            singbox.log
+          if-no-files-found: warn
+          retention-days: 7

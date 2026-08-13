@@ -157,41 +157,61 @@ const INJECTED_SCRIPT = `
 async function checkProxy() {
   if (!PROXY_CONFIG) return true;
 
-  console.log('[Proxy] Validating proxy connection...');
-  try {
-    const axiosConfig = {
-      proxy: false,
-      timeout: 10000
+  const configuredTestUrls = (process.env.PROXY_TEST_URLS || '')
+    .split(',')
+    .map(url => url.trim())
+    .filter(Boolean);
+  const testUrls = configuredTestUrls.length > 0
+    ? configuredTestUrls
+    : [
+        'https://www.cloudflare.com/cdn-cgi/trace',
+        'https://api.ipify.org?format=json',
+        'https://www.google.com/generate_204'
+      ];
+
+  const axiosConfig = {
+    proxy: false,
+    timeout: 15000,
+    maxRedirects: 3,
+    validateStatus: status => status >= 200 && status < 500
+  };
+
+  if (PROXY_CONFIG.server === SINGBOX_LOCAL_PROXY) {
+    axiosConfig.proxy = {
+      protocol: 'http',
+      host: '127.0.0.1',
+      port: 8080,
     };
-
-    if (PROXY_CONFIG.server === SINGBOX_LOCAL_PROXY) {
-      // sing-box local proxy: use as plain HTTP proxy, no auth needed
-      axiosConfig.proxy = {
-        protocol: 'http',
-        host: '127.0.0.1',
-        port: 8080,
+  } else {
+    const proxyUrl = new URL(PROXY_CONFIG.server);
+    axiosConfig.proxy = {
+      protocol: proxyUrl.protocol.replace(':', ''),
+      host: proxyUrl.hostname,
+      port: Number(proxyUrl.port),
+    };
+    if (PROXY_CONFIG.username && PROXY_CONFIG.password) {
+      axiosConfig.proxy.auth = {
+        username: PROXY_CONFIG.username,
+        password: PROXY_CONFIG.password
       };
-    } else {
-      axiosConfig.proxy = {
-        protocol: 'http',
-        host: new URL(PROXY_CONFIG.server).hostname,
-        port: new URL(PROXY_CONFIG.server).port,
-      };
-      if (PROXY_CONFIG.username && PROXY_CONFIG.password) {
-        axiosConfig.proxy.auth = {
-          username: PROXY_CONFIG.username,
-          password: PROXY_CONFIG.password
-        };
-      }
     }
-
-    await axios.get('https://www.google.com', axiosConfig);
-    console.log('[Proxy] Connection successful!');
-    return true;
-  } catch (error) {
-    console.error(`[Proxy] Connection failed: ${error.message}`);
-    return false;
   }
+
+  console.log(`[Proxy] Validating proxy connection with ${testUrls.length} endpoint(s)...`);
+  for (const url of testUrls) {
+    try {
+      const response = await axios.get(url, axiosConfig);
+      console.log(`[Proxy] Connection successful: ${url} (HTTP ${response.status})`);
+      return true;
+    } catch (error) {
+      const status = error.response?.status || 'N/A';
+      const code = error.code || 'N/A';
+      console.error(`[Proxy] Test failed: ${url} (code=${code}, status=${status}, message=${error.message})`);
+    }
+  }
+
+  console.error('[Proxy] All validation endpoints failed. Check singbox.log for the upstream error.');
+  return false;
 }
 
 function checkPort(port) {
