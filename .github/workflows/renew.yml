@@ -2,21 +2,15 @@ name: Katabump Auto Renew
 
 on:
   schedule:
-    # 每天 UTC 0点 (北京时间 8点) 运行
     - cron: '0 0 * * *'
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   renew:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -27,81 +21,56 @@ jobs:
         env:
           PROXY_URL: ${{ secrets.PROXY_URL }}
         run: |
-          set -euo pipefail
-
-          if [ -z "$PROXY_URL" ]; then
+          if (-not $env:PROXY_URL) {
             echo "PROXY_URL not set, skipping sing-box setup."
             exit 0
-          fi
+          }
 
-          SINGBOX_VER="1.11.0"
-          ARCH="$(dpkg --print-architecture)"
-          case "$ARCH" in
-            amd64) SINGBOX_ARCH="amd64" ;;
-            arm64) SINGBOX_ARCH="arm64" ;;
-            *) echo "Unsupported runner architecture: $ARCH"; exit 1 ;;
-          esac
-
-          ARCHIVE="sing-box-${SINGBOX_VER}-linux-${SINGBOX_ARCH}.tar.gz"
-          echo "Downloading sing-box v${SINGBOX_VER} for ${SINGBOX_ARCH}..."
-          wget --https-only --tries=3 --timeout=30 \
-            "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VER}/${ARCHIVE}"
-          tar -xzf "$ARCHIVE"
-          mv "sing-box-${SINGBOX_VER}-linux-${SINGBOX_ARCH}/sing-box" ./sing-box
-          chmod +x ./sing-box
-
-          echo "Running proxy parser tests..."
-          python3 -m unittest discover -s tests -v
+          $SINGBOX_VER="1.11.0"
+          $ARCHIVE="sing-box-${SINGBOX_VER}-windows-amd64.zip"
+          echo "Downloading sing-box v${SINGBOX_VER} for windows..."
+          Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VER}/${ARCHIVE}" -OutFile $ARCHIVE
+          Expand-Archive -Path $ARCHIVE -DestinationPath .
+          Move-Item -Path "sing-box-${SINGBOX_VER}-windows-amd64\sing-box.exe" -Destination .\sing-box.exe
 
           echo "Generating sing-box config from PROXY_URL..."
-          python3 proxy_handler.py
-
-          echo "Checking sing-box config..."
-          ./sing-box check -c config.json
+          python proxy_handler.py
 
           echo "Starting sing-box..."
-          nohup ./sing-box run -c config.json >singbox.log 2>&1 &
-          SINGBOX_PID=$!
-          echo "$SINGBOX_PID" >singbox.pid
-          sleep 3
+          Start-Process -FilePath .\sing-box.exe -ArgumentList "run -c config.json" -NoNewWindow -RedirectStandardOutput singbox.log -RedirectStandardError singbox.log -PassThru | Set-Variable -Name "proc"
+          Start-Sleep -Seconds 3
 
-          if ! kill -0 "$SINGBOX_PID" 2>/dev/null; then
+          if ($proc.HasExited) {
             echo "sing-box exited unexpectedly."
-            cat singbox.log || true
+            Get-Content singbox.log
             exit 1
-          fi
+          }
 
-          if ! timeout 5 bash -c '</dev/tcp/127.0.0.1/8080'; then
-            echo "sing-box is running but port 8080 is not accepting connections."
-            cat singbox.log || true
-            exit 1
-          fi
-
-          echo "sing-box started successfully (PID=${SINGBOX_PID})."
+          echo "sing-box started successfully (PID=$($proc.Id))."
+        shell: powershell
 
       - name: Verify Proxy IP
         env:
           PROXY_URL: ${{ secrets.PROXY_URL }}
         run: |
-          if [ -n "$PROXY_URL" ]; then
+          if ($env:PROXY_URL) {
             echo "Testing proxy connection..."
-            IP=$(curl -s --proxy http://127.0.0.1:8080 http://api.ipify.org || echo "FAILED")
+            $IP = curl.exe -s --proxy http://127.0.0.1:8080 http://api.ipify.org
+            if (-not $IP) { $IP = "FAILED" }
             echo "Proxy Exit IP: $IP"
-            if [ "$IP" = "FAILED" ] || [ -z "$IP" ]; then
+            if ($IP -eq "FAILED") {
               echo "Proxy failed to route traffic!"
-              cat singbox.log || true
+              Get-Content singbox.log
               exit 1
-            fi
-          fi
+            }
+          }
+        shell: powershell
 
       - name: Install Dependencies
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          pip install playwright==1.48.0 camoufox[geoip,playwright]==0.4.11 requests
-          playwright install-deps chromium
-          camoufox fetch
+          python -m pip install --upgrade pip
+          pip install DrissionPage requests
+        shell: powershell
 
       - name: Run Renew Script
         env:
@@ -113,27 +82,17 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           PYTHONUNBUFFERED: "1"
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" python action_renew.py
+          PYTHONUTF8: "1"
+        run: python action_renew.py
+        shell: powershell
 
       - name: Show Proxy Diagnostics
         if: always()
         run: |
-          echo "===== sing-box process ====="
-          if [ -f singbox.pid ]; then
-            ps -fp "$(cat singbox.pid)" || true
-          else
-            echo "singbox.pid not found"
-          fi
-
-          echo "===== port 8080 ====="
-          ss -lntp | grep ':8080' || true
-
-          echo "===== sing-box log ====="
-          if [ -f singbox.log ]; then
-            cat singbox.log
-          else
-            echo "singbox.log not found"
-          fi
+          if (Test-Path singbox.log) {
+            Get-Content singbox.log
+          }
+        shell: powershell
 
       - name: Upload Diagnostics
         if: always()
