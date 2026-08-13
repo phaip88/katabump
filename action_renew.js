@@ -1,6 +1,7 @@
 const { chromium } = require('playwright-extra');
 const stealth = require('puppeteer-extra-plugin-stealth')();
 const axios = require('axios');
+const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
 const { spawn, exec } = require('child_process');
@@ -13,35 +14,96 @@ const GITHUB_EVENT_NAME = process.env.GITHUB_EVENT_NAME || '';
 // Anti-detection: scheduled runs get 0-3h random delay; manual runs skip delay
 const SINGBOX_LOCAL_PROXY = 'http://127.0.0.1:8080';
 
-async function sendTelegramMessage(message, imagePath = null) {
-    if (!TG_BOT_TOKEN || !TG_CHAT_ID) return;
+function telegramErrorDetails(error) {
+    const status = error.response?.status || 'N/A';
+    const description = error.response?.data?.description || error.message;
+    return `status=${status}, description=${description}`;
+}
 
-    // 1. 发送文字消息
-    try {
-        const url = `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`;
-        await axios.post(url, {
-            chat_id: TG_CHAT_ID,
-            text: message,
-            parse_mode: 'Markdown'
-        });
-        console.log('[Telegram] Message sent.');
-    } catch (e) {
-        console.error('[Telegram] Failed to send message:', e.message);
+async function validateTelegramConfig() {
+    if (!TG_BOT_TOKEN || !TG_CHAT_ID) {
+        console.log('[Telegram] Disabled: TG_BOT_TOKEN or TG_CHAT_ID is not configured.');
+        return false;
     }
 
-    // 2. 发送图片 (如果有)
+    try {
+        const baseUrl = `https://api.telegram.org/bot${TG_BOT_TOKEN}`;
+        const [botResponse, chatResponse] = await Promise.all([
+            axios.get(`${baseUrl}/getMe`, { timeout: 15000 }),
+            axios.get(`${baseUrl}/getChat`, {
+                params: { chat_id: TG_CHAT_ID },
+                timeout: 15000
+            })
+        ]);
+
+        if (!botResponse.data?.ok || !chatResponse.data?.ok) {
+            throw new Error('Telegram API returned ok=false during configuration validation.');
+        }
+
+        const botName = botResponse.data.result?.username || botResponse.data.result?.first_name || 'unknown';
+        const chatType = chatResponse.data.result?.type || 'unknown';
+        console.log(`[Telegram] Configuration valid: bot=@${botName}, chat_type=${chatType}.`);
+        return true;
+    } catch (error) {
+        console.error(`[Telegram] Configuration validation failed: ${telegramErrorDetails(error)}`);
+        console.error('[Telegram] Check TG_BOT_TOKEN, TG_CHAT_ID, /start, and bot permissions.');
+        return false;
+    }
+}
+
+async function sendTelegramMessage(message, imagePath = null) {
+    if (!TG_BOT_TOKEN || !TG_CHAT_ID) {
+        console.log('[Telegram] Notification skipped: credentials are not configured.');
+        return false;
+    }
+
+    const baseUrl = `https://api.telegram.org/bot${TG_BOT_TOKEN}`;
+
     if (imagePath && fs.existsSync(imagePath)) {
-        console.log('[Telegram] Sending photo...');
-        // 使用 curl 发送图片，避免引入额外的 multipart 依赖
-        // 注意：Windows 本地测试可能需要环境支持 curl，GitHub Actions (Ubuntu) 默认支持
-        const cmd = `curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendPhoto" -F chat_id="${TG_CHAT_ID}" -F photo="@${imagePath}"`;
-        await new Promise(resolve => {
-            exec(cmd, (err) => {
-                if (err) console.error('[Telegram] Failed to send photo via curl:', err.message);
-                else console.log('[Telegram] Photo sent.');
-                resolve();
+        try {
+            const form = new FormData();
+            form.append('chat_id', TG_CHAT_ID);
+            form.append('caption', message.slice(0, 1024));
+            form.append('photo', fs.createReadStream(imagePath), {
+                filename: path.basename(imagePath)
             });
-        });
+
+            const response = await axios.post(`${baseUrl}/sendPhoto`, form, {
+                headers: form.getHeaders(),
+                timeout: 60000,
+                maxBodyLength: Infinity,
+                maxContentLength: Infinity
+            });
+
+            if (!response.data?.ok) {
+                throw new Error(response.data?.description || 'Telegram sendPhoto returned ok=false');
+            }
+
+            console.log(`[Telegram] Photo notification sent: ${path.basename(imagePath)}`);
+            return true;
+        } catch (error) {
+            console.error(`[Telegram] Photo upload failed: ${telegramErrorDetails(error)}`);
+            console.log('[Telegram] Falling back to a text-only notification.');
+        }
+    } else if (imagePath) {
+        console.error(`[Telegram] Screenshot not found: ${imagePath}`);
+    }
+
+    try {
+        const response = await axios.post(`${baseUrl}/sendMessage`, {
+            chat_id: TG_CHAT_ID,
+            text: message.slice(0, 4096)
+        }, { timeout: 30000 });
+
+        if (!response.data?.ok) {
+            throw new Error(response.data?.description || 'Telegram sendMessage returned ok=false');
+        }
+
+        console.log('[Telegram] Text notification sent.');
+        return true;
+    } catch (error) {
+        console.error(`[Telegram] Text notification failed: ${telegramErrorDetails(error)}`);
+        return false;
     }
 }
 
@@ -639,6 +701,7 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
   }
 
   const users = getUsers();
+  await validateTelegramConfig();
   if (users.length === 0) {
     console.log('未在 process.env.USERS_JSON 中找到用户');
     process.exit(1);
@@ -693,6 +756,7 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
 
     for (let i = 0; i < users.length; i++) {
         const user = users[i];
+        let telegramNotified = false;
         console.log(`\n=== 正在处理用户 ${i + 1}/${users.length} ===`); // 隐去具体邮箱 logging
 
         try {
@@ -774,7 +838,7 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
           const failShotPath = path.join(failPhotoDir, `${failSafeName}_login_fail.png`);
           try { await page.screenshot({ path: failShotPath, fullPage: true }); } catch (e) { }
 
-          await sendTelegramMessage(`❌ *登录失败*\n用户: ${user.username}\n原因: 账号或密码错误`, failShotPath);
+          telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${user.username}\n原因: 账号或密码错误`, failShotPath)) || telegramNotified;
 
                         continue;
                     }
@@ -791,6 +855,19 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                 await page.getByRole('link', { name: 'See' }).first().click();
             } catch (e) {
                 console.log('未找到 "See" 按钮。');
+                const seeFailDir = path.join(process.cwd(), 'screenshots');
+                if (!fs.existsSync(seeFailDir)) fs.mkdirSync(seeFailDir, { recursive: true });
+                const seeFailName = user.username.replace(/[^a-z0-9]/gi, '_');
+                const seeFailShot = path.join(seeFailDir, `${seeFailName}_see_not_found.png`);
+                try { await page.screenshot({ path: seeFailShot, fullPage: true }); } catch (screenshotError) {
+                    console.error('[Screenshot] See-not-found capture failed:', screenshotError.message);
+                }
+                telegramNotified = (await sendTelegramMessage(
+                    `⚠️ 处理未完成
+用户: ${user.username}
+原因: 未找到 See 链接`,
+                    seeFailShot
+                )) || telegramNotified;
                 continue;
             }
 
@@ -920,7 +997,7 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                                     const skipShotPath = path.join(photoDir, `${safeUser}_skip.png`);
                                     try { await page.screenshot({ path: skipShotPath, fullPage: true }); } catch (e) { }
 
-                                    await sendTelegramMessage(`⏳ *暂无法续期 (跳过)*\n用户: ${user.username}\n原因: 还没到时间\n下次可用: ${dateStr}`, skipShotPath);
+                                    telegramNotified = (await sendTelegramMessage(`⏳ 暂无法续期（跳过）\n用户: ${user.username}\n原因: 还没到时间\n下次可用: ${dateStr}`, skipShotPath)) || telegramNotified;
 
                                     renewSuccess = true; // Mark as done to stop retries
                                     try {
@@ -956,7 +1033,7 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                             const successShotPath = path.join(photoDir, `${safeUser}_success.png`);
                             try { await page.screenshot({ path: successShotPath, fullPage: true }); } catch (e) { }
 
-                            await sendTelegramMessage(`✅ *续期成功*\n用户: ${user.username}\n状态: 服务器已成功续期！`, successShotPath);
+                            telegramNotified = (await sendTelegramMessage(`✅ 续期成功\n用户: ${user.username}\n状态: 服务器已成功续期！`, successShotPath)) || telegramNotified;
                             renewSuccess = true;
                             break;
                         } else {
@@ -995,6 +1072,13 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
             console.log(`截图已保存至: ${screenshotPath}`);
         } catch (e) {
             console.log('截图失败:', e.message);
+        }
+
+        if (!telegramNotified) {
+            telegramNotified = await sendTelegramMessage(
+                `ℹ️ 用户处理完成\n用户: ${user.username}\n状态: 未识别到明确的续期成功、登录失败或等待续期结果，请查看截图。`,
+                screenshotPath
+            );
         }
 
         console.log(`用户处理完成\n`);
