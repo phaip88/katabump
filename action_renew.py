@@ -4,6 +4,7 @@ import asyncio
 import re
 import requests
 import time
+import random
 from urllib.parse import urlparse
 from camoufox.async_api import AsyncCamoufox
 
@@ -26,8 +27,19 @@ def send_tg_message(text, photo_path=None):
         print(f"TG notification failed: {e}")
 
 async def wait_for_turnstile(page):
-    print("等待 Turnstile 验证 (Camoufox 会尝试自动处理)...")
+    print("等待 Turnstile 验证 (增加鼠标熵以加速通过)...")
     for _ in range(25):
+        try:
+            x = random.randint(300, 800)
+            y = random.randint(200, 600)
+            await page.mouse.move(x, y, steps=5)
+            if random.random() > 0.6:
+                await page.mouse.down()
+                await asyncio.sleep(random.uniform(0.05, 0.15))
+                await page.mouse.up()
+        except:
+            pass
+
         val = await page.evaluate("() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]'); return el ? el.value : null; }")
         if val and len(val) > 20:
             print("Turnstile 已自动完成！")
@@ -47,11 +59,6 @@ async def process_user(user, browser):
     try:
         await page.goto("https://dashboard.katabump.com/auth/login", timeout=60000, wait_until="domcontentloaded")
         
-        await page.add_init_script("""
-            Object.defineProperty(MouseEvent.prototype, 'screenX', { value: 950 });
-            Object.defineProperty(MouseEvent.prototype, 'screenY', { value: 450 });
-        """)
-
         await page.fill('input[type="email"]', username)
         await page.fill('input[type="password"]', password)
         
