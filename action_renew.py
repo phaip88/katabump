@@ -91,8 +91,15 @@ def process_user(user, browser):
             page.wait.ele_loaded('css:input[type="email"]', timeout=30)
             print("5秒前置盾已通过")
 
-        page.ele('css:input[type="email"]').input(username)
-        page.ele('css:input[type="password"]').input(password)
+        email_ele = page.ele('css:input[type="email"]')
+        email_ele.click()
+        email_ele.clear()
+        page.actions.type(username)
+        
+        pwd_ele = page.ele('css:input[type="password"]')
+        pwd_ele.click()
+        pwd_ele.clear()
+        page.actions.type(password)
         
         time.sleep(2)
         if page.ele("text:Troubleshoot", timeout=1):
@@ -109,6 +116,21 @@ def process_user(user, browser):
 
         login_btn = page.ele('text:Login')
         if login_btn:
+            # Re-check inputs before clicking
+            email_ele = page.ele('css:input[type="email"]')
+            if email_ele and not email_ele.attr('value'):
+                print("⚠️ 邮箱已被清空，重新输入...")
+                email_ele.click()
+                email_ele.clear()
+                page.actions.type(username)
+                
+            pwd_ele = page.ele('css:input[type="password"]')
+            if pwd_ele and not pwd_ele.attr('value'):
+                print("⚠️ 密码已被清空，重新输入...")
+                pwd_ele.click()
+                pwd_ele.clear()
+                page.actions.type(password)
+                
             login_btn.click()
             time.sleep(2)
 
