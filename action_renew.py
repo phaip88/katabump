@@ -60,21 +60,26 @@ async def wait_for_turnstile(page):
                 if 'cloudflare' in f.url:
                     await f.evaluate(patch_code)
             
-            cf_iframe = page.frame_locator('iframe[src*="cloudflare"]').locator('body')
-            if await cf_iframe.count() > 0:
-                print(f"[Turnstile] 找到 {await cf_iframe.count()} 个 iframe body，尝试点击...")
-                await cf_iframe.first.click(force=True, delay=random.randint(50, 150))
-                # 尝试点击里面的复选框
-                checkbox = page.frame_locator('iframe[src*="cloudflare"]').locator('input[type="checkbox"]')
-                if await checkbox.count() > 0:
-                    print("[Turnstile] 找到内部 checkbox，尝试强制点击...")
-                    await checkbox.first.click(force=True)
-                else:
-                    print("[Turnstile] 未找到内部 checkbox，可能处于无感知验证模式。")
+            iframe_element = page.locator('iframe[src*="cloudflare"]')
+            count = await iframe_element.count()
+            if count > 0:
+                print(f"[Turnstile] 找到 {count} 个 cloudflare iframe，尝试进入交互...")
+                try:
+                    cf_frame = page.frame_locator('iframe[src*="cloudflare"]').first
+                    await cf_frame.locator('body').click(force=True, delay=random.randint(50, 150), timeout=2000)
+                    
+                    checkbox = cf_frame.locator('input[type="checkbox"]')
+                    if await checkbox.count() > 0:
+                        print("[Turnstile] 找到内部 checkbox，尝试强制点击...")
+                        await checkbox.first.click(force=True, timeout=2000)
+                    else:
+                        print("[Turnstile] 未找到内部 checkbox，执行默认坐标移动。")
+                except Exception as inner_e:
+                    print(f"[Turnstile] 点击 iframe 内容时出错: {inner_e}")
             else:
-                print("[Turnstile] 未找到 cloudflare iframe。")
+                print("[Turnstile] 未找到 cloudflare iframe，页面可能正在加载。")
         except Exception as e:
-            print(f"[Turnstile] iframe 交互出错: {e}")
+            print(f"[Turnstile] iframe 检测外层出错: {e}")
 
         val = await page.evaluate("() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]'); return el ? el.value : null; }")
         if val and len(val) > 20:
