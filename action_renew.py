@@ -135,6 +135,7 @@ async def wait_for_turnstile(page):
             pass
         
         await asyncio.sleep(1)
+        wait_time += 1
     return False
 
 async def process_user(user, browser):
