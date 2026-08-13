@@ -88,7 +88,9 @@ async def wait_for_turnstile(page):
                 }'''), timeout=5.0)
 
                 if box and box.get('width', 0) > 0:
-                    print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，执行多段仿生游走...")
+                    print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，等待2秒确保内部完全加载，再执行多段仿生游走...")
+                    await asyncio.sleep(2.0)
+                    
                     # 依据 Lunes Host Bypass 指南：Turnstile 的 Checkbox 实体在左侧 (x偏移约28)，绝不能点 iframe 中心
                     cx = box['x'] + 28 + random.uniform(-3, 3)
                     cy = box['y'] + box['height'] / 2 + random.uniform(-3, 3)
@@ -146,16 +148,17 @@ async def process_user(user, browser):
     context = await browser.new_context()
     
     # 注入用户提供的 ObjectAscended/CDP-bug-MouseEvent-.screenX-.screenY-patcher 补丁
+    # 必须使用 value 静态值而不是 get 访问器，以防止 Turnstile 检测函数的 toString() 暴露出非 native code
     await context.add_init_script("""
     (() => {
         function getRandomInt(min, max) {
             return Math.floor(Math.random() * (max - min + 1)) + min;
         }
-        let screenX = window.screen.width ? getRandomInt(window.screen.width / 2, window.screen.width) : getRandomInt(800, 1200);
-        let screenY = window.screen.height ? getRandomInt(window.screen.height / 2, window.screen.height) : getRandomInt(400, 600);
+        let screenX = getRandomInt(800, 1200);
+        let screenY = getRandomInt(400, 600);
         
-        Object.defineProperty(MouseEvent.prototype, 'screenX', { get: function() { return this.clientX + screenX; } });
-        Object.defineProperty(MouseEvent.prototype, 'screenY', { get: function() { return this.clientY + screenY; } });
+        Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
+        Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
     })();
     """)
     
