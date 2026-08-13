@@ -62,13 +62,19 @@ async def wait_for_turnstile(page):
             
             cf_iframe = page.frame_locator('iframe[src*="cloudflare"]').locator('body')
             if await cf_iframe.count() > 0:
+                print(f"[Turnstile] 找到 {await cf_iframe.count()} 个 iframe body，尝试点击...")
                 await cf_iframe.first.click(force=True, delay=random.randint(50, 150))
                 # 尝试点击里面的复选框
                 checkbox = page.frame_locator('iframe[src*="cloudflare"]').locator('input[type="checkbox"]')
                 if await checkbox.count() > 0:
+                    print("[Turnstile] 找到内部 checkbox，尝试强制点击...")
                     await checkbox.first.click(force=True)
-        except:
-            pass
+                else:
+                    print("[Turnstile] 未找到内部 checkbox，可能处于无感知验证模式。")
+            else:
+                print("[Turnstile] 未找到 cloudflare iframe。")
+        except Exception as e:
+            print(f"[Turnstile] iframe 交互出错: {e}")
 
         val = await page.evaluate("() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]'); return el ? el.value : null; }")
         if val and len(val) > 20:
