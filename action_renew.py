@@ -144,6 +144,21 @@ async def process_user(user, browser):
     password = user.get('password')
     print(f"\n========== 开始处理: {username} ==========")
     context = await browser.new_context()
+    
+    # 注入用户提供的 ObjectAscended/CDP-bug-MouseEvent-.screenX-.screenY-patcher 补丁
+    await context.add_init_script("""
+    (() => {
+        function getRandomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+        let screenX = window.screen.width ? getRandomInt(window.screen.width / 2, window.screen.width) : getRandomInt(800, 1200);
+        let screenY = window.screen.height ? getRandomInt(window.screen.height / 2, window.screen.height) : getRandomInt(400, 600);
+        
+        Object.defineProperty(MouseEvent.prototype, 'screenX', { get: function() { return this.clientX + screenX; } });
+        Object.defineProperty(MouseEvent.prototype, 'screenY', { get: function() { return this.clientY + screenY; } });
+    })();
+    """)
+    
     page = await context.new_page()
     safe_user = re.sub(r'[^a-z0-9]', '_', username.lower())
     os.makedirs('screenshots', exist_ok=True)
