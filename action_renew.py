@@ -185,19 +185,29 @@ def process_user(user, browser):
 
         print("检查弹窗内是否有 Altcha...")
         try:
-            altcha_widget = page.ele('tag:altcha-widget', timeout=2)
+            altcha_widget = page.ele('tag:altcha-widget', timeout=5)
             if altcha_widget:
-                cb = altcha_widget.shadow_root.ele('tag:input')
+                print("找到了 Altcha 组件，准备点击...")
+                cb = altcha_widget.shadow_root.ele('css:input[type="checkbox"]')
+                if not cb:
+                    cb = altcha_widget.ele('css:input[type="checkbox"]')
                 if cb:
                     cb.click()
+                    print("已点击 Altcha Checkbox，等待验证结果 (最大 15 秒)...")
                     for _ in range(15):
                         state = altcha_widget.attr('state')
                         if state == 'verified':
                             print("✅ ALTCHA 验证通过！")
                             break
                         time.sleep(1)
+                else:
+                    print("⚠️ 找到了 altcha-widget 但没找到 checkbox。尝试直接点击 Widget。")
+                    altcha_widget.click()
+                    time.sleep(5)
+            else:
+                print("未发现 Altcha 组件。")
         except Exception as e:
-            pass
+            print(f"处理 Altcha 发生错误: {e}")
 
         ts_passed_in_modal = solve_turnstile(page)
 
