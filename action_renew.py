@@ -91,17 +91,30 @@ def process_user(user, browser):
             page.wait.ele_loaded('css:input[type="email"]', timeout=30)
             print("5秒前置盾已通过")
 
-        email_ele = page.ele('css:input[type="email"]')
-        email_ele.click()
-        email_ele.clear()
-        page.actions.type(username)
-        
-        pwd_ele = page.ele('css:input[type="password"]')
-        pwd_ele.click()
-        pwd_ele.clear()
-        page.actions.type(password)
-        
+        # 使用 JS 强制修改 React 输入框的值
+        react_setter_js = """
+            function setNativeValue(element, value) {
+                const valueSetter = Object.getOwnPropertyDescriptor(element, 'value').set;
+                const prototype = Object.getPrototypeOf(element);
+                const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
+                
+                if (valueSetter && valueSetter !== prototypeValueSetter) {
+                    prototypeValueSetter.call(element, value);
+                } else {
+                    valueSetter.call(element, value);
+                }
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            let emailEl = document.querySelector('input[type="email"]');
+            let pwdEl = document.querySelector('input[type="password"]');
+            if (emailEl) setNativeValue(emailEl, arguments[0]);
+            if (pwdEl) setNativeValue(pwdEl, arguments[1]);
+        """
+        page.run_js(react_setter_js, username, password)
+        print("已使用 JS 填入账号密码。")
         time.sleep(2)
+        
         if page.ele("text:Troubleshoot", timeout=1):
             print("检测到 Troubleshoot 封禁页面！")
             screenshot_path = f"screenshots/{safe_user}_troubleshoot.png"
@@ -116,23 +129,11 @@ def process_user(user, browser):
 
         login_btn = page.ele('text:Login')
         if login_btn:
-            # Re-check inputs before clicking
-            email_ele = page.ele('css:input[type="email"]')
-            if email_ele and not email_ele.attr('value'):
-                print("⚠️ 邮箱已被清空，重新输入...")
-                email_ele.click()
-                email_ele.clear()
-                page.actions.type(username)
-                
-            pwd_ele = page.ele('css:input[type="password"]')
-            if pwd_ele and not pwd_ele.attr('value'):
-                print("⚠️ 密码已被清空，重新输入...")
-                pwd_ele.click()
-                pwd_ele.clear()
-                page.actions.type(password)
-                
+            # 再次强制赋值以防 Turnstile 导致表单重置
+            page.run_js(react_setter_js, username, password)
+            print("点击 Login 按钮...")
             login_btn.click()
-            time.sleep(2)
+            time.sleep(3)
 
         if page.ele("text:Please complete captcha", timeout=3):
             print("登录失败: 要求人机验证 (Please complete captcha)")
