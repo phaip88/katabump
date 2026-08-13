@@ -17,44 +17,46 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Start Proxy (sing-box)
-        env:
-          PROXY_URL: ${{ secrets.PROXY_URL }}
+      - name: Install Dependencies
         run: |
-          if (-not $env:PROXY_URL) {
-            echo "PROXY_URL not set, skipping sing-box setup."
-            exit 0
-          }
-
-          $SINGBOX_VER="1.11.0"
-          $ARCHIVE="sing-box-${SINGBOX_VER}-windows-amd64.zip"
-          echo "Downloading sing-box v${SINGBOX_VER} for windows..."
-          Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VER}/${ARCHIVE}" -OutFile $ARCHIVE
-          Expand-Archive -Path $ARCHIVE -DestinationPath .
-          Move-Item -Path "sing-box-${SINGBOX_VER}-windows-amd64\sing-box.exe" -Destination .\sing-box.exe
-
-          echo "Generating sing-box config from PROXY_URL..."
-          python proxy_handler.py
-
-          echo "Starting sing-box..."
-          Start-Process -FilePath .\sing-box.exe -ArgumentList "run -c config.json" -NoNewWindow -RedirectStandardOutput singbox_out.log -RedirectStandardError singbox_err.log -PassThru | Set-Variable -Name "proc"
-          Start-Sleep -Seconds 3
-
-          if ($proc.HasExited) {
-            echo "sing-box exited unexpectedly."
-            if (Test-Path singbox_out.log) { Get-Content singbox_out.log }
-            if (Test-Path singbox_err.log) { Get-Content singbox_err.log }
-            exit 1
-          }
-
-          echo "sing-box started successfully (PID=$($proc.Id))."
+          python -m pip install --upgrade pip
+          pip install DrissionPage requests
         shell: powershell
 
-      - name: Verify Proxy IP
+      - name: Start Proxy and Run Renew Script
         env:
+          USERS_JSON: ${{ secrets.USERS_JSON }}
+          HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
+          PROXY_TEST_URLS: ${{ vars.PROXY_TEST_URLS }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PYTHONUNBUFFERED: "1"
+          PYTHONUTF8: "1"
         run: |
           if ($env:PROXY_URL) {
+            $SINGBOX_VER="1.11.0"
+            $ARCHIVE="sing-box-${SINGBOX_VER}-windows-amd64.zip"
+            echo "Downloading sing-box v${SINGBOX_VER} for windows..."
+            Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VER}/${ARCHIVE}" -OutFile $ARCHIVE
+            Expand-Archive -Path $ARCHIVE -DestinationPath .
+            Move-Item -Path "sing-box-${SINGBOX_VER}-windows-amd64\sing-box.exe" -Destination .\sing-box.exe
+
+            echo "Generating sing-box config from PROXY_URL..."
+            python proxy_handler.py
+
+            echo "Starting sing-box..."
+            Start-Process -FilePath .\sing-box.exe -ArgumentList "run -c config.json" -NoNewWindow -RedirectStandardOutput singbox_out.log -RedirectStandardError singbox_err.log -PassThru | Set-Variable -Name "proc"
+            Start-Sleep -Seconds 3
+
+            if ($proc.HasExited) {
+              echo "sing-box exited unexpectedly."
+              if (Test-Path singbox_out.log) { Get-Content singbox_out.log }
+              if (Test-Path singbox_err.log) { Get-Content singbox_err.log }
+              exit 1
+            }
+
             echo "Testing proxy connection..."
             python -c "import urllib.request; req = urllib.request.build_opener(urllib.request.ProxyHandler({'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})); print(req.open('http://api.ipify.org', timeout=10).read().decode('utf-8'))" > ip.txt
             $IP = Get-Content ip.txt -ErrorAction SilentlyContinue
@@ -66,26 +68,15 @@ jobs:
               exit 1
             }
           }
-        shell: powershell
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install DrissionPage requests
-        shell: powershell
+          echo "Running Python script..."
+          python action_renew.py
+          $exitCode = $LASTEXITCODE
 
-      - name: Run Renew Script
-        env:
-          USERS_JSON: ${{ secrets.USERS_JSON }}
-          HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
-          PROXY_URL: ${{ secrets.PROXY_URL }}
-          PROXY_TEST_URLS: ${{ vars.PROXY_TEST_URLS }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          PYTHONUNBUFFERED: "1"
-          PYTHONUTF8: "1"
-        run: python action_renew.py
+          if ($env:PROXY_URL) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+          exit $exitCode
         shell: powershell
 
       - name: Show Proxy Diagnostics
