@@ -58,7 +58,7 @@ jobs:
             }
 
             echo "Testing proxy connection..."
-            python -c "import urllib.request; req = urllib.request.build_opener(urllib.request.ProxyHandler({'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})); print(req.open('http://api.ipify.org', timeout=10).read().decode('utf-8'))" > ip.txt
+            python -c "import urllib.request; req = urllib.request.build_opener(urllib.request.ProxyHandler({'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})); print(req.open('http://ip-api.com/json', timeout=10).read().decode('utf-8'))" > ip.txt
             $IP = Get-Content ip.txt -ErrorAction SilentlyContinue
             if (-not $IP) { $IP = "FAILED" }
             echo "Proxy Exit IP: $IP"
