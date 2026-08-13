@@ -294,7 +294,7 @@ def main():
             sys.exit(1)
 
     config = {
-        "log": {"level": "info", "timestamp": True},
+        "log": {"level": "debug", "timestamp": True},
         "inbounds": [
             {
                 "type": "http",

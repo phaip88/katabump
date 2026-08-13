@@ -210,7 +210,24 @@ async function checkProxy() {
     }
   }
 
-  console.error('[Proxy] All validation endpoints failed. Check singbox.log for the upstream error.');
+  console.error('[Proxy] All validation endpoints failed.');
+
+  if (PROXY_CONFIG.server === SINGBOX_LOCAL_PROXY) {
+    try {
+      if (fs.existsSync('singbox.log')) {
+        const lines = fs.readFileSync('singbox.log', 'utf8').trim().split(/\r?\n/);
+        const tail = lines.slice(-120).join('\n');
+        console.error('===== sing-box log (last 120 lines) =====');
+        console.error(tail || '[singbox.log is empty]');
+        console.error('===== end sing-box log =====');
+      } else {
+        console.error('[Proxy] singbox.log not found.');
+      }
+    } catch (error) {
+      console.error(`[Proxy] Failed to read singbox.log: ${error.message}`);
+    }
+  }
+
   return false;
 }
 
