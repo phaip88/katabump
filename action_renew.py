@@ -89,6 +89,15 @@ async def process_user(user, browser):
     try:
         await page.goto("https://dashboard.katabump.com/auth/login", timeout=60000, wait_until="domcontentloaded")
         
+        # 5秒盾 (UAM) 前置检测与等待
+        try:
+            if "Just a moment" in await page.title() or await page.locator('#challenge-running').is_visible():
+                print("检测到 Cloudflare 5秒前置盾 (UAM)，正在等待自适应通过...")
+                await page.wait_for_selector('input[type="email"]', timeout=25000, state="visible")
+                print("5秒前置盾已通过，进入真实页面。")
+        except Exception:
+            pass
+
         await page.fill('input[type="email"]', username)
         await page.fill('input[type="password"]', password)
         
