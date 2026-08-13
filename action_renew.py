@@ -156,13 +156,13 @@ async def process_user(user, browser):
             print("⚠️ Turnstile 响应超时，强制尝试点击 Login...")
 
         login_btn = page.get_by_role("button", name="Login", exact=True).first
-        await login_btn.click()
+        await login_btn.click(timeout=10000)
         await asyncio.sleep(2)
 
         if await page.get_by_text("Please complete captcha").is_visible():
             print("登录失败: 要求人机验证 (Please complete captcha)")
             screenshot_path = f"screenshots/{safe_user}_captcha_fail.png"
-            await page.screenshot(path=screenshot_path, full_page=True)
+            await page.screenshot(path=screenshot_path, full_page=False, timeout=10000)
             send_tg_message(f"⚠️ 登录失败 (需过盾)\n用户: {username}", screenshot_path)
             return
 
@@ -175,11 +175,11 @@ async def process_user(user, browser):
         try:
             see_link = page.get_by_role("link", name="See").first
             await see_link.wait_for(timeout=20000, state="visible")
-            await see_link.click()
+            await see_link.click(timeout=10000)
         except:
             print("未找到 See 按钮，可能登录未成功。")
             screenshot_path = f"screenshots/{safe_user}_see_not_found.png"
-            await page.screenshot(path=screenshot_path, full_page=True)
+            await page.screenshot(path=screenshot_path, full_page=False, timeout=10000)
             send_tg_message(f"⚠️ 处理未完成\n用户: {username}\n原因: 未找到 See 链接", screenshot_path)
             return
 
@@ -187,7 +187,7 @@ async def process_user(user, browser):
         renew_btn = page.get_by_role("button", name="Renew", exact=True).first
         try:
             await renew_btn.wait_for(timeout=10000, state="visible")
-            await renew_btn.click()
+            await renew_btn.click(timeout=10000)
             print("Renew 按钮已点击。等待模态框...")
         except:
             print("未找到 Renew 按钮，可能已无服务器。")
@@ -208,7 +208,7 @@ async def process_user(user, browser):
             date_str = match.group(1) if match else 'Unknown'
             print(f"暂无法续期。下次可用: {date_str}")
             screenshot_path = f"screenshots/{safe_user}_skip.png"
-            await page.screenshot(path=screenshot_path, full_page=True)
+            await page.screenshot(path=screenshot_path, full_page=False, timeout=10000)
             send_tg_message(f"⏳ 暂无法续期（跳过）\n用户: {username}\n原因: 还没到时间\n下次可用: {date_str}", screenshot_path)
             return
 
@@ -235,10 +235,10 @@ async def process_user(user, browser):
         confirm_btn = modal.get_by_role("button", name="Renew").first
         if await confirm_btn.is_visible():
             screenshot_path = f"screenshots/{safe_user}_before_confirm.png"
-            await page.screenshot(path=screenshot_path, full_page=True)
+            await page.screenshot(path=screenshot_path, full_page=False, timeout=10000)
             
             print("点击 Renew 确认按钮...")
-            await confirm_btn.click()
+            await confirm_btn.click(timeout=10000)
             
             await asyncio.sleep(3)
             if await page.get_by_text("Please complete the captcha to continue").is_visible():
@@ -248,7 +248,7 @@ async def process_user(user, browser):
                 
             print("✅ 续期请求处理完成。")
             final_path = f"screenshots/{safe_user}_success.png"
-            await page.screenshot(path=final_path, full_page=True)
+            await page.screenshot(path=final_path, full_page=False, timeout=10000)
             send_tg_message(f"✅ 续期尝试完成\n用户: {username}", final_path)
             
     except Exception as e:
