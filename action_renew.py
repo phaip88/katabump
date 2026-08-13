@@ -89,8 +89,9 @@ async def wait_for_turnstile(page):
 
                 if box and box.get('width', 0) > 0:
                     print(f"[Turnstile] JS 获取到盾块或兜底区域坐标: {box}，执行多段仿生游走...")
-                    cx = box['x'] + box['width'] / 2 + random.uniform(-5, 5)
-                    cy = box['y'] + box['height'] / 2 + random.uniform(-2, 2)
+                    # 依据 Lunes Host Bypass 指南：Turnstile 的 Checkbox 实体在左侧 (x偏移约28)，绝不能点 iframe 中心
+                    cx = box['x'] + 28 + random.uniform(-3, 3)
+                    cy = box['y'] + box['height'] / 2 + random.uniform(-3, 3)
                     
                     # 打破直线：生成 2 个中间途经点
                     start_x, start_y = random.randint(100, 300), random.randint(100, 300)
@@ -107,7 +108,7 @@ async def wait_for_turnstile(page):
                     await asyncio.sleep(random.uniform(0.05, 0.15))
                     await asyncio.wait_for(page.mouse.up(), timeout=2.0)
                     
-                    print("[Turnstile] 单次物理点击完成，移出焦点并进入纯净轮询等待...")
+                    print(f"[Turnstile] 单次物理点击完成 (坐标 {cx:.1f}, {cy:.1f})，移出焦点并进入纯净轮询等待...")
                     away_x = cx + random.randint(100, 200) * random.choice([1, -1])
                     away_y = cy + random.randint(100, 200) * random.choice([1, -1])
                     await asyncio.wait_for(page.mouse.move(away_x, away_y, steps=10), timeout=2.0)
