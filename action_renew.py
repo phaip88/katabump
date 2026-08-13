@@ -91,28 +91,14 @@ def process_user(user, browser):
             page.wait.ele_loaded('css:input[type="email"]', timeout=30)
             print("5秒前置盾已通过")
 
-        # 使用 JS 强制修改 React 输入框的值
-        react_setter_js = """
-            function setNativeValue(element, value) {
-                const valueSetter = Object.getOwnPropertyDescriptor(element, 'value').set;
-                const prototype = Object.getPrototypeOf(element);
-                const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
-                
-                if (valueSetter && valueSetter !== prototypeValueSetter) {
-                    prototypeValueSetter.call(element, value);
-                } else {
-                    valueSetter.call(element, value);
-                }
-                element.dispatchEvent(new Event('input', { bubbles: true }));
-                element.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-            let emailEl = document.querySelector('input[type="email"]');
-            let pwdEl = document.querySelector('input[type="password"]');
-            if (emailEl) setNativeValue(emailEl, arguments[0]);
-            if (pwdEl) setNativeValue(pwdEl, arguments[1]);
-        """
-        page.run_js(react_setter_js, username, password)
-        print("已使用 JS 填入账号密码。")
+        email_ele = page.ele('css:input[type="email"]')
+        if email_ele:
+            email_ele.input(username, clear=True)
+            
+        pwd_ele = page.ele('css:input[type="password"]')
+        if pwd_ele:
+            pwd_ele.input(password, clear=True)
+            
         time.sleep(2)
         
         if page.ele("text:Troubleshoot", timeout=1):
@@ -129,8 +115,14 @@ def process_user(user, browser):
 
         login_btn = page.ele('text:Login')
         if login_btn:
-            # 再次强制赋值以防 Turnstile 导致表单重置
-            page.run_js(react_setter_js, username, password)
+            # 再次检查并填充，以防 Turnstile 验证后表单被重置
+            if email_ele and not email_ele.value:
+                print("⚠️ 邮箱为空，重新输入...")
+                email_ele.input(username, clear=True)
+            if pwd_ele and not pwd_ele.value:
+                print("⚠️ 密码为空，重新输入...")
+                pwd_ele.input(password, clear=True)
+                
             print("点击 Login 按钮...")
             login_btn.click()
             time.sleep(3)
