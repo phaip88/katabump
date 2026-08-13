@@ -113,15 +113,17 @@ def process_user(user, browser):
         if not ts_passed:
             print("⚠️ Turnstile 响应超时，强制尝试点击 Login...")
 
-        login_btn = page.ele('text:Login')
+        login_btn = page.ele('css:button[id="submit"]')
         if login_btn:
             print("尝试通过 input 输入账号密码...")
             user_input = page.ele('css:input[name="email"]')
             if user_input:
+                page.run_js(f"document.querySelector('input[name=\"email\"]').value = '{username}'; document.querySelector('input[name=\"email\"]').dispatchEvent(new Event('input', {{ bubbles: true }}));")
                 user_input.input(username, clear=True)
             
             pwd_input = page.ele('css:input[name="password"]')
             if pwd_input:
+                page.run_js(f"document.querySelector('input[name=\"password\"]').value = '{password}'; document.querySelector('input[name=\"password\"]').dispatchEvent(new Event('input', {{ bubbles: true }}));")
                 pwd_input.input(password, clear=True)
             
             print("点击 Login 按钮...")
