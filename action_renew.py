@@ -188,16 +188,34 @@ def process_user(user, browser):
             altcha_widget = page.ele('tag:altcha-widget', timeout=5)
             if altcha_widget:
                 print("找到了 Altcha 组件，准备点击...")
+                
+                # Dump shadow HTML for debugging
+                try:
+                    shadow_html = page.run_js("return document.querySelector('altcha-widget').shadowRoot.innerHTML")
+                    with open(f"screenshots/{safe_user}_altcha_shadow.html", "w", encoding="utf-8") as f:
+                        f.write(shadow_html)
+                except Exception as ex:
+                    print(f"Dump shadow DOM error: {ex}")
+
+                # Try clicking via DrissionPage Native
+                altcha_widget.click()
+                time.sleep(1)
+                
+                # Try clicking via JS on widget
+                page.run_js("document.querySelector('altcha-widget').click()")
+                time.sleep(1)
+                
+                # Try clicking inner input
                 page.run_js("""
                     const widget = document.querySelector('altcha-widget');
                     if (widget && widget.shadowRoot) {
                         const cb = widget.shadowRoot.querySelector('input[type="checkbox"]');
                         if (cb) cb.click();
-                        else widget.click();
-                    } else if (widget) {
-                        widget.click();
+                        const label = widget.shadowRoot.querySelector('label');
+                        if (label) label.click();
                     }
                 """)
+                
                 print("已尝试触发 Altcha，等待验证结果 (最大 15 秒)...")
                 for _ in range(15):
                     state = altcha_widget.attr('state')
