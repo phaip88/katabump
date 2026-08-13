@@ -37,12 +37,13 @@ jobs:
           python proxy_handler.py
 
           echo "Starting sing-box..."
-          Start-Process -FilePath .\sing-box.exe -ArgumentList "run -c config.json" -NoNewWindow -RedirectStandardOutput singbox.log -RedirectStandardError singbox.log -PassThru | Set-Variable -Name "proc"
+          Start-Process -FilePath .\sing-box.exe -ArgumentList "run -c config.json" -NoNewWindow -RedirectStandardOutput singbox_out.log -RedirectStandardError singbox_err.log -PassThru | Set-Variable -Name "proc"
           Start-Sleep -Seconds 3
 
           if ($proc.HasExited) {
             echo "sing-box exited unexpectedly."
-            Get-Content singbox.log
+            if (Test-Path singbox_out.log) { Get-Content singbox_out.log }
+            if (Test-Path singbox_err.log) { Get-Content singbox_err.log }
             exit 1
           }
 
@@ -60,7 +61,7 @@ jobs:
             echo "Proxy Exit IP: $IP"
             if ($IP -eq "FAILED") {
               echo "Proxy failed to route traffic!"
-              Get-Content singbox.log
+              if (Test-Path singbox_err.log) { Get-Content singbox_err.log }
               exit 1
             }
           }
@@ -89,8 +90,8 @@ jobs:
       - name: Show Proxy Diagnostics
         if: always()
         run: |
-          if (Test-Path singbox.log) {
-            Get-Content singbox.log
+          if (Test-Path singbox_err.log) {
+            Get-Content singbox_err.log
           }
         shell: powershell
 
@@ -101,6 +102,7 @@ jobs:
           name: katabump-diagnostics-${{ github.run_id }}
           path: |
             screenshots/
-            singbox.log
+            singbox_out.log
+            singbox_err.log
           if-no-files-found: warn
           retention-days: 7
