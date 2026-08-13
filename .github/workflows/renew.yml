@@ -56,7 +56,8 @@ jobs:
         run: |
           if ($env:PROXY_URL) {
             echo "Testing proxy connection..."
-            $IP = curl.exe -s --proxy http://127.0.0.1:8080 http://api.ipify.org
+            python -c "import urllib.request; req = urllib.request.build_opener(urllib.request.ProxyHandler({'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})); print(req.open('http://api.ipify.org', timeout=10).read().decode('utf-8'))" > ip.txt
+            $IP = Get-Content ip.txt -ErrorAction SilentlyContinue
             if (-not $IP) { $IP = "FAILED" }
             echo "Proxy Exit IP: $IP"
             if ($IP -eq "FAILED") {
