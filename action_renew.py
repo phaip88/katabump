@@ -384,9 +384,20 @@ def process_user(user, browser):
             send_tg_message(f"⚠️ 续期失败\n用户: {username}\n原因: 确认阶段提示 Captcha 错误", final_path)
             page.close()
             return False
-            
+
+        # 提取最后提交后官方提示文本（例如：未至续期时间 / 下次可用时间）
+        post_prompt = page.ele("text:You can't renew your server yet", timeout=2)
+        if post_prompt:
+            txt = post_prompt.text
+            match = re.search(r'as of\s+(.*?)\s+\(', txt)
+            date_str = match.group(1) if match else '待定'
+            print(f"官方反馈: {txt}")
+            send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {username}\n官方提示: {txt}\n下次可用: {date_str}", final_path)
+            page.close()
+            return True
+
         print("✅ 续期请求处理完成。")
-        send_tg_message(f"✅ 续期完成\n用户: {username}", final_path)
+        send_tg_message(f"✅ 续期成功\n用户: {username}\n状态: 续期请求已提交并确认", final_path)
         return True
             
     except Exception as e:
