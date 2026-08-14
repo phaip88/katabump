@@ -15,6 +15,32 @@ TG_CHAT_ID = os.environ.get('TG_CHAT_ID')
 PROXY_URL = os.environ.get('PROXY_URL')
 PROXY_SERVER = "127.0.0.1:8080" if PROXY_URL else None
 
+def sanitize_log(text):
+    """脱敏日志中的敏感凭据与 Token"""
+    if not text:
+        return ""
+    text = str(text)
+    if TG_BOT_TOKEN:
+        text = text.replace(TG_BOT_TOKEN, "***")
+    if PROXY_URL:
+        text = text.replace(PROXY_URL, "***")
+    return text
+
+def mask_username(username):
+    """脱敏用户名与邮箱地址，防止在公开日志中泄露"""
+    if not username:
+        return "unknown"
+    if "@" in username:
+        name, domain = username.split("@", 1)
+        if len(name) <= 2:
+            m_name = name[0] + "*"
+        else:
+            m_name = name[0] + "*" * (len(name) - 2) + name[-1]
+        return f"{m_name}@{domain}"
+    if len(username) <= 2:
+        return username[0] + "*"
+    return username[0] + "*" * (len(username) - 2) + username[-1]
+
 def send_tg_message(text, photo_path=None):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
@@ -26,7 +52,8 @@ def send_tg_message(text, photo_path=None):
         else:
             requests.post(url + "sendMessage", data={"chat_id": TG_CHAT_ID, "text": text}, timeout=10)
     except Exception as e:
-        print(f"Telegram 推送失败: {e}")
+        safe_err = sanitize_log(e)
+        print(f"Telegram 推送异常 (已脱敏): {safe_err}")
 
 def solve_altcha_pow(challenge_data):
     try:
@@ -49,11 +76,10 @@ def solve_altcha_pow(challenge_data):
                 }
                 return base64.b64encode(json.dumps(payload).encode('utf-8')).decode('utf-8')
     except Exception as e:
-        print(f"Altcha PoW 求解出错: {e}")
+        print(f"Altcha PoW 求解出错: {sanitize_log(e)}")
     return None
 
 def solve_turnstile(page, timeout_sec=25):
-    # Quick check if turnstile response field or container exists
     ts_exists = page.ele('@name=cf-turnstile-response', timeout=2) or page.ele('css:.cf-turnstile', timeout=1)
     if not ts_exists:
         return False
@@ -82,7 +108,6 @@ def solve_turnstile(page, timeout_sec=25):
                 time.sleep(1)
                 continue
             
-            # Inject patch directly into the Turnstile iframe
             challengeIframe.run_js("""
                 window.dtp = 1
                 function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -98,7 +123,7 @@ def solve_turnstile(page, timeout_sec=25):
                 print("点击 Turnstile Checkbox...")
                 challengeButton.click()
                 time.sleep(2)
-        except Exception as e:
+        except Exception:
             pass
         time.sleep(1)
     
@@ -209,13 +234,14 @@ def handle_altcha(page):
                     time.sleep(1)
                     return True
     except Exception as e:
-        print(f"处理 Altcha 发生异常: {e}")
+        print(f"处理 Altcha 发生异常: {sanitize_log(e)}")
     return False
 
 def process_user(user, browser):
     username = user.get('username')
     password = user.get('password')
-    print(f"\n========== 开始处理: {username} ==========")
+    masked_u = mask_username(username)
+    print(f"\n========== 开始处理: {masked_u} ==========")
     
     page = browser.new_tab()
     safe_user = re.sub(r'[^a-z0-9]', '_', username.lower())
@@ -244,7 +270,7 @@ def process_user(user, browser):
             print("检测到 Troubleshoot 封禁页面！")
             screenshot_path = f"screenshots/{safe_user}_troubleshoot.png"
             page.get_screenshot(path=screenshot_path, full_page=True)
-            send_tg_message(f"⚠️ 登录失败 (被CF彻底拦截)\n用户: {username}", screenshot_path)
+            send_tg_message(f"⚠️ 登录失败 (被CF彻底拦截)\n用户: {masked_u}", screenshot_path)
             page.close()
             return False
 
@@ -254,15 +280,12 @@ def process_user(user, browser):
 
         login_btn = page.ele('css:button[id="submit"]')
         if login_btn:
-            print("尝试通过 input 输入账号密码...")
             user_input = page.ele('css:input[name="email"]')
             if user_input:
-                page.run_js(f"document.querySelector('input[name=\"email\"]').value = '{username}'; document.querySelector('input[name=\"email\"]').dispatchEvent(new Event('input', {{ bubbles: true }}));")
                 user_input.input(username, clear=True)
             
             pwd_input = page.ele('css:input[name="password"]')
             if pwd_input:
-                page.run_js(f"document.querySelector('input[name=\"password\"]').value = '{password}'; document.querySelector('input[name=\"password\"]').dispatchEvent(new Event('input', {{ bubbles: true }}));")
                 pwd_input.input(password, clear=True)
             
             print("点击 Login 按钮...")
@@ -273,13 +296,13 @@ def process_user(user, browser):
             print("登录失败: 要求人机验证 (Please complete captcha)")
             screenshot_path = f"screenshots/{safe_user}_captcha_fail.png"
             page.get_screenshot(path=screenshot_path)
-            send_tg_message(f"⚠️ 登录失败 (需过盾)\n用户: {username}", screenshot_path)
+            send_tg_message(f"⚠️ 登录失败 (需过盾)\n用户: {masked_u}", screenshot_path)
             page.close()
             return False
 
         if page.ele("text:These credentials do not match", timeout=1):
             print("登录失败: 密码或账号错误")
-            send_tg_message(f"⚠️ 登录失败 (账号密码错误)\n用户: {username}")
+            send_tg_message(f"⚠️ 登录失败 (账号密码错误)\n用户: {masked_u}")
             page.close()
             return False
             
@@ -291,9 +314,7 @@ def process_user(user, browser):
             print("未找到 See 按钮，可能登录未成功。")
             screenshot_path = f"screenshots/{safe_user}_see_not_found.png"
             page.get_screenshot(path=screenshot_path)
-            with open(f"screenshots/{safe_user}_page.html", "w", encoding="utf-8") as f:
-                f.write(page.html)
-            send_tg_message(f"⚠️ 处理未完成\n用户: {username}\n原因: 未找到 See 链接", screenshot_path)
+            send_tg_message(f"⚠️ 处理未完成\n用户: {masked_u}\n原因: 未找到 See 链接", screenshot_path)
             page.close()
             return False
 
@@ -304,7 +325,7 @@ def process_user(user, browser):
             print("Renew 按钮已点击。等待模态框...")
         else:
             print("未找到 Renew 按钮，可能已无服务器。")
-            send_tg_message(f"⚠️ 续期失败\n用户: {username}\n原因: 未找到 Renew 按钮")
+            send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 未找到 Renew 按钮")
             page.close()
             return False
 
@@ -314,11 +335,11 @@ def process_user(user, browser):
         if not_time:
             txt = not_time.text
             match = re.search(r'as of\s+(.*?)\s+\(', txt)
-            date_str = match.group(1) if match else 'Unknown'
+            date_str = match.group(1) if match else '待定'
             print(f"暂无法续期。下次可用: {date_str}")
             screenshot_path = f"screenshots/{safe_user}_skip.png"
             page.get_screenshot(path=screenshot_path)
-            send_tg_message(f"ℹ️ 暂无法续期（跳过）\n用户: {username}\n原因: 还没到时间\n下次可用: {date_str}", screenshot_path)
+            send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {masked_u}\n官方提示: {txt}\n下次可用: {date_str}", screenshot_path)
             page.close()
             return True
 
@@ -370,7 +391,7 @@ def process_user(user, browser):
         if confirm_btn:
             try:
                 confirm_btn.click()
-            except Exception as ex:
+            except Exception:
                 pass
         
         print("等待续期结果与页面状态更新...")
@@ -381,7 +402,7 @@ def process_user(user, browser):
 
         if page.ele("text:Please complete the captcha to continue", timeout=1):
             print("⚠️ 确认时遭遇 Captcha 错误。")
-            send_tg_message(f"⚠️ 续期失败\n用户: {username}\n原因: 确认阶段提示 Captcha 错误", final_path)
+            send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 确认阶段提示 Captcha 错误", final_path)
             page.close()
             return False
 
@@ -392,24 +413,23 @@ def process_user(user, browser):
             match = re.search(r'as of\s+(.*?)\s+\(', txt)
             date_str = match.group(1) if match else '待定'
             print(f"官方反馈: {txt}")
-            send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {username}\n官方提示: {txt}\n下次可用: {date_str}", final_path)
+            send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {masked_u}\n官方提示: {txt}\n下次可用: {date_str}", final_path)
             page.close()
             return True
 
         print("✅ 续期请求处理完成。")
-        send_tg_message(f"✅ 续期成功\n用户: {username}\n状态: 续期请求已提交并确认", final_path)
+        send_tg_message(f"✅ 续期成功\n用户: {masked_u}\n状态: 续期请求已提交并确认", final_path)
         return True
             
     except Exception as e:
-        print(f"发生异常: {e}")
-        import traceback
-        traceback.print_exc()
+        safe_e = sanitize_log(e)
+        print(f"发生异常: {safe_e}")
         screenshot_path = f"screenshots/{safe_user}_error.png"
         try:
             page.get_screenshot(path=screenshot_path)
         except:
             pass
-        send_tg_message(f"❌ 运行异常\n用户: {username}\n原因: {str(e)}", screenshot_path)
+        send_tg_message(f"❌ 运行异常\n用户: {masked_u}\n原因: {safe_e}", screenshot_path)
         return False
     finally:
         try:
@@ -449,7 +469,7 @@ def main():
     for user in users:
         success = process_user(user, browser)
         if not success:
-            failed_users.append(user.get('username'))
+            failed_users.append(mask_username(user.get('username')))
         
     browser.quit()
     
