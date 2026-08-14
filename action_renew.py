@@ -329,34 +329,65 @@ def process_user(user, browser):
         if page.ele('@name=cf-turnstile-response', timeout=2):
             solve_turnstile(page, timeout_sec=20)
 
-        confirm_btn = page.ele('css:#renew-modal button:contains("Renew")', timeout=3)
+        # 准确查找模态框内部的 Renew 确认提交按钮
+        confirm_btn = None
+        modal = page.ele('#renew-modal', timeout=3) or page.ele('css:.modal', timeout=1) or page.ele('css:[role="dialog"]', timeout=1)
+        if modal:
+            confirm_btn = (modal.ele('xpath:.//button[contains(., "Renew")]', timeout=2) 
+                           or modal.ele('tag:button@type=submit', timeout=1)
+                           or modal.ele('css:button.btn-primary', timeout=1))
         if not confirm_btn:
-            confirm_btn = page.ele('text:Renew', index=2, timeout=2)
+            confirm_btn = page.ele('xpath://button[contains(., "Renew")]', timeout=2)
 
+        screenshot_path = f"screenshots/{safe_user}_before_confirm.png"
+        page.get_screenshot(path=screenshot_path)
+        
+        print("点击 Renew 确认按钮...")
+        # 1. 使用 JS 精准派发点击事件到弹窗内的 Renew 按钮
+        click_res = page.run_js("""
+            (() => {
+                const modal = document.querySelector('#renew-modal') || document.querySelector('.modal') || document.querySelector('[role="dialog"]') || document.body;
+                const buttons = Array.from(modal.querySelectorAll('button'));
+                const renewBtn = buttons.find(b => b.textContent.trim().toLowerCase() === 'renew' || b.textContent.includes('Renew'));
+                if (renewBtn) {
+                    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(evt => {
+                        renewBtn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+                    });
+                    renewBtn.click();
+                    return { success: true, text: renewBtn.textContent.trim(), tag: renewBtn.tagName };
+                }
+                const form = modal.querySelector('form');
+                if (form) {
+                    form.submit();
+                    return { success: true, form_submitted: true };
+                }
+                return { success: false, reason: 'button_not_found' };
+            })();
+        """)
+        print(f"Renew 按钮触发结果: {click_res}")
+
+        # 2. 原生点击补充
         if confirm_btn:
-            screenshot_path = f"screenshots/{safe_user}_before_confirm.png"
-            page.get_screenshot(path=screenshot_path)
-            
-            print("点击 Renew 确认按钮...")
-            confirm_btn.click()
-            
-            time.sleep(5)
-            
-            final_path = f"screenshots/{safe_user}_success.png"
-            page.get_screenshot(path=final_path)
+            try:
+                confirm_btn.click()
+            except Exception as ex:
+                pass
+        
+        print("等待续期结果与页面状态更新...")
+        time.sleep(6)
+        
+        final_path = f"screenshots/{safe_user}_success.png"
+        page.get_screenshot(path=final_path)
 
-            if page.ele("text:Please complete the captcha to continue", timeout=1):
-                print("⚠️ 确认时遭遇 Captcha 错误。")
-                send_tg_message(f"⚠️ 续期失败\n用户: {username}\n原因: 确认阶段提示 Captcha 错误", final_path)
-                page.close()
-                return False
-                
-            print("✅ 续期请求处理完成。")
-            send_tg_message(f"✅ 续期完成\n用户: {username}", final_path)
-            return True
-        else:
-            print("未找到 Renew 确认按钮。")
+        if page.ele("text:Please complete the captcha to continue", timeout=1):
+            print("⚠️ 确认时遭遇 Captcha 错误。")
+            send_tg_message(f"⚠️ 续期失败\n用户: {username}\n原因: 确认阶段提示 Captcha 错误", final_path)
+            page.close()
             return False
+            
+        print("✅ 续期请求处理完成。")
+        send_tg_message(f"✅ 续期完成\n用户: {username}", final_path)
+        return True
             
     except Exception as e:
         print(f"发生异常: {e}")
