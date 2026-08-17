@@ -237,17 +237,36 @@ def handle_altcha(page):
         print(f"处理 Altcha 发生异常: {sanitize_log(e)}")
     return False
 
-def process_user(user, browser):
+def create_browser():
+    """创建并配置独立的 Chromium 实例，确保账号间 Session 完全隔离"""
+    co = ChromiumOptions()
+    co.auto_port()
+    EXTENSION_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "CDP_patcher", "turnstilePatch"))
+    if os.path.exists(EXTENSION_PATH):
+        co.add_extension(EXTENSION_PATH)
+        print(f"Loaded Turnstile CDP extension from {EXTENSION_PATH}")
+    
+    if PROXY_SERVER:
+        co.set_proxy(PROXY_SERVER)
+        print(f"Using proxy: {PROXY_SERVER}")
+        
+    co.set_argument('--disable-blink-features=AutomationControlled')
+    co.set_argument('--start-maximized')
+    return Chromium(co)
+
+def process_user(user):
     username = user.get('username')
     password = user.get('password')
     masked_u = mask_username(username)
     print(f"\n========== 开始处理: {masked_u} ==========")
     
-    page = browser.new_tab()
     safe_user = re.sub(r'[^a-z0-9]', '_', username.lower())
     os.makedirs('screenshots', exist_ok=True)
     
+    browser = None
     try:
+        browser = create_browser()
+        page = browser.latest_tab
         page.get("https://dashboard.katabump.com/auth/login", timeout=60)
         
         # 5秒盾前置检测
@@ -271,7 +290,6 @@ def process_user(user, browser):
             screenshot_path = f"screenshots/{safe_user}_troubleshoot.png"
             page.get_screenshot(path=screenshot_path, full_page=True)
             send_tg_message(f"⚠️ 登录失败 (被CF彻底拦截)\n用户: {masked_u}", screenshot_path)
-            page.close()
             return False
 
         ts_passed = solve_turnstile(page, timeout_sec=25)
@@ -297,13 +315,11 @@ def process_user(user, browser):
             screenshot_path = f"screenshots/{safe_user}_captcha_fail.png"
             page.get_screenshot(path=screenshot_path)
             send_tg_message(f"⚠️ 登录失败 (需过盾)\n用户: {masked_u}", screenshot_path)
-            page.close()
             return False
 
         if page.ele("text:These credentials do not match", timeout=1):
             print("登录失败: 密码或账号错误")
             send_tg_message(f"⚠️ 登录失败 (账号密码错误)\n用户: {masked_u}")
-            page.close()
             return False
             
         print("成功发起登录，等待 'See' 按钮...")
@@ -315,7 +331,6 @@ def process_user(user, browser):
             screenshot_path = f"screenshots/{safe_user}_see_not_found.png"
             page.get_screenshot(path=screenshot_path)
             send_tg_message(f"⚠️ 处理未完成\n用户: {masked_u}\n原因: 未找到 See 链接", screenshot_path)
-            page.close()
             return False
 
         print("进入控制面板，寻找 Renew 按钮...")
@@ -326,7 +341,6 @@ def process_user(user, browser):
         else:
             print("未找到 Renew 按钮，可能已无服务器。")
             send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 未找到 Renew 按钮")
-            page.close()
             return False
 
         time.sleep(2)
@@ -340,7 +354,6 @@ def process_user(user, browser):
             screenshot_path = f"screenshots/{safe_user}_skip.png"
             page.get_screenshot(path=screenshot_path)
             send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {masked_u}\n官方提示: {txt}\n下次可用: {date_str}", screenshot_path)
-            page.close()
             return True
 
         # 处理弹窗内的 Altcha 验证
@@ -403,7 +416,6 @@ def process_user(user, browser):
         if page.ele("text:Please complete the captcha to continue", timeout=1):
             print("⚠️ 确认时遭遇 Captcha 错误。")
             send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 确认阶段提示 Captcha 错误", final_path)
-            page.close()
             return False
 
         # 提取最后提交后官方提示文本（例如：未至续期时间 / 下次可用时间）
@@ -414,7 +426,6 @@ def process_user(user, browser):
             date_str = match.group(1) if match else '待定'
             print(f"官方反馈: {txt}")
             send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {masked_u}\n官方提示: {txt}\n下次可用: {date_str}", final_path)
-            page.close()
             return True
 
         print("✅ 续期请求处理完成。")
@@ -426,16 +437,18 @@ def process_user(user, browser):
         print(f"发生异常: {safe_e}")
         screenshot_path = f"screenshots/{safe_user}_error.png"
         try:
-            page.get_screenshot(path=screenshot_path)
+            if browser:
+                browser.latest_tab.get_screenshot(path=screenshot_path)
         except:
             pass
         send_tg_message(f"❌ 运行异常\n用户: {masked_u}\n原因: {safe_e}", screenshot_path)
         return False
     finally:
-        try:
-            page.close()
-        except:
-            pass
+        if browser:
+            try:
+                browser.quit()
+            except:
+                pass
 
 def main():
     users_json = os.environ.get('USERS_JSON', '[]')
@@ -448,30 +461,12 @@ def main():
         print("⚠️ USERS_JSON 未提供或解析失败！")
         return
 
-    print("启动 Chromium (DrissionPage)...")
-    co = ChromiumOptions()
-    co.auto_port()
-    EXTENSION_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "CDP_patcher", "turnstilePatch"))
-    if os.path.exists(EXTENSION_PATH):
-        co.add_extension(EXTENSION_PATH)
-        print(f"Loaded Turnstile CDP extension from {EXTENSION_PATH}")
-    
-    if PROXY_SERVER:
-        co.set_proxy(PROXY_SERVER)
-        print(f"Using proxy: {PROXY_SERVER}")
-        
-    co.set_argument('--disable-blink-features=AutomationControlled')
-    co.set_argument('--start-maximized')
-    
-    browser = Chromium(co)
-
     failed_users = []
     for user in users:
-        success = process_user(user, browser)
+        success = process_user(user)
         if not success:
             failed_users.append(mask_username(user.get('username')))
-        
-    browser.quit()
+        time.sleep(2)
     
     if len(failed_users) == len(users) and len(users) > 0:
         print("\n❌ 所有账号续期均失败，退出代码 1")
