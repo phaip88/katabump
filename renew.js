@@ -191,6 +191,19 @@ async function launchNativeChrome() {
     }
 }
 
+// 日志脱敏：a***b@example.com
+function maskUsername(username) {
+    if (!username) return 'unknown';
+    const at = username.indexOf('@');
+    if (at > 0) {
+        const name = username.slice(0, at);
+        const m = name.length <= 2 ? name[0] + '*' : name[0] + '*'.repeat(name.length - 2) + name[name.length - 1];
+        return `${m}${username.slice(at)}`;
+    }
+    if (username.length <= 2) return username[0] + '*';
+    return username[0] + '*'.repeat(username.length - 2) + username[username.length - 1];
+}
+
 // 从 login.json 读取用户列表
 function getUsers() {
     try {
@@ -306,15 +319,17 @@ async function attemptTurnstileCdp(page) {
     page.setDefaultTimeout(60000);
 
     // --- 代理认证处理 ---
+    // 注意: context.setHTTPCredentials 在 Playwright 1.46+ 已移除，仅在旧版本可用
     if (PROXY_CONFIG && PROXY_CONFIG.username) {
         console.log('[Proxy] Setting up authentication...');
-        await context.setHTTPCredentials({
-            username: PROXY_CONFIG.username,
-            password: PROXY_CONFIG.password
-        });
-    } else {
-        // 如果没有代理(或者代理无认证)，清除之前的认证信息，防止干扰
-        await context.setHTTPCredentials(null);
+        try {
+            await context.setHTTPCredentials({
+                username: PROXY_CONFIG.username,
+                password: PROXY_CONFIG.password
+            });
+        } catch (e) {
+            console.warn('[Proxy] setHTTPCredentials unavailable in this Playwright version, skipping (proxy auth must be handled by the proxy itself).');
+        }
     }
 
     // --- 关键：注入 Hook 脚本 ---
@@ -324,7 +339,7 @@ async function attemptTurnstileCdp(page) {
 
     for (let i = 0; i < users.length; i++) {
         const user = users[i];
-        console.log(`\n=== Processing User ${i + 1}/${users.length}: ${user.username} ===`);
+        console.log(`\n=== Processing User ${i + 1}/${users.length}: ${maskUsername(user.username)} ===`);
 
         try {
             if (page.isClosed()) {
@@ -390,7 +405,7 @@ async function attemptTurnstileCdp(page) {
                     const errorMsg = page.getByText('Incorrect password or no account');
                     const captchaError = page.getByText('Please complete captcha');
                     if (await errorMsg.isVisible({ timeout: 2000 })) {
-                        console.error(`   >> ❌ Login failed: Incorrect password or no account for user ${user.username}`);
+                        console.error(`   >> ❌ Login failed: Incorrect password or no account for user ${maskUsername(user.username)}`);
 
                         // Screenshot for login failure
                         const photoDir = path.join(__dirname, 'photo');
@@ -402,7 +417,7 @@ async function attemptTurnstileCdp(page) {
                     }
 
                     if (await captchaError.isVisible({ timeout: 2000 })) {
-                        console.error(`   >> ❌ Login failed: Captcha required (Please complete captcha) for user ${user.username}`);
+                        console.error(`   >> ❌ Login failed: Captcha required (Please complete captcha) for user ${maskUsername(user.username)}`);
                         const photoDir = path.join(__dirname, 'photo');
                         if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
                         try { await page.screenshot({ path: path.join(photoDir, `${user.username}_captcha_fail.png`), fullPage: true }); } catch (e) { }
@@ -424,7 +439,7 @@ async function attemptTurnstileCdp(page) {
             } catch (e) {
                 console.log('Could not find "See" button. Checking if already on detail page or login failed.');
                 if (page.url().includes('login')) {
-                    console.error('Login failed for user ' + user.username);
+                    console.error('Login failed for user ' + maskUsername(user.username));
                     continue;
                 }
             }
@@ -585,7 +600,7 @@ async function attemptTurnstileCdp(page) {
             }
 
         } catch (err) {
-            console.error(`Error processing user ${user.username}:`, err);
+            console.error(`Error processing user ${maskUsername(user.username)}:`, err);
         }
 
         // Snapshot before handling next user (Normal end of loop)
@@ -599,7 +614,7 @@ async function attemptTurnstileCdp(page) {
             console.log('Failed to take screenshot:', e.message);
         }
 
-        console.log(`Finished User ${user.username}\n`);
+        console.log(`Finished User ${maskUsername(user.username)}\n`);
     }
 
     console.log('All users processed.');

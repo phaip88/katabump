@@ -1,0 +1,12 @@
+# 凭据（切勿提交）
+login.json
+
+# 运行产物
+photo/
+screenshots/
+config.json
+singbox*.log
+ip.txt
+node_modules/
+ChromeData_Katabump/
+__pycache__/

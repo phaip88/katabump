@@ -2,6 +2,9 @@
 
 基于[XCQ0607/katabump](https://github.com/XCQ0607/katabump)优化：增加singbox全协议代理、随机时间签到、**ALTCHA验证码自动绕过**
 
+> **CI 入口说明**：GitHub Actions 实际运行的是 `action_renew.py`（DrissionPage 驱动），无需任何本地环境配置。
+> `renew.js` / `action_renew.js` 为 Node.js 备选版本（本地调试用）。
+
 
 ## 🚀 GitHub Actions 云端运行 (推荐)
 
@@ -33,14 +36,14 @@
    - `TG_CHAT_ID`: 你的 Chat ID (用户 ID 或群组 ID)。
    > 如果未配置，脚本将跳过发送通知。
 
-### 4. 运行结果与截图
+### 运行结果与截图
 
-- **运行日志**: 在 Actions 中的 `Run Renew Script` 步骤查看。
-- **截图留存**: 每次运行（无论成功与否），通过 `Upload Screenshots` 步骤自动上传截图。
-  - 你可以在 Workflow 运行详情页的 **Artifacts** 区域下载 `screenshots` 压缩包。
-  - 每个账号对应一张截图（`username.png`），方便确认状态。
+- **运行日志**: 在 Actions 中的 `Start Proxy and Run Renew Script` 步骤查看。
+- **截图留存**: 每次运行（无论成功与否），通过 `Upload Diagnostics` 步骤自动上传截图与 sing-box 日志。
+  - 你可以在 Workflow 运行详情页的 **Artifacts** 区域下载 `katabump-diagnostics-<run_id>` 压缩包。
+  - 每个账号对应多张截图（登录/确认前/成功或失败状态），方便确认状态。
 
-5. 保存后，进入 **Actions** 页面，启用 Workflow。它会在**每天北京时间 08:00 (UTC 00:00)** 自动运行。
+5. 保存后，进入 **Actions** 页面，启用 Workflow。它会在**每天北京时间 10:00 (UTC 02:00)** 自动运行。
 6. 你也可以手动点击 "Run workflow" 立即测试。
 7. **随机延迟**: 定时任务触发时，脚本会随机延迟 0-3 小时后执行，防止被目标站识别为自动化。手动触发时不会有延迟，立即执行。
 
@@ -82,7 +85,7 @@ npm install
 
 ### 4. 配置 Chrome 路径
 
-打开 `renew.js` 文件，找到第 11-12 行：
+打开 `renew.js` 文件，找到开头的常量配置：
 
 ```javascript
 const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
@@ -96,8 +99,8 @@ const HEADLESS = true;
   * **作用**: 它能让你的登录状态保持更久，不需要每次运行都重新输入密码。
   * **能不能删？**: **可以删**。如果你想要重置所有状态（彻底清除缓存），只需删除这个文件夹即可。脚本下次运行时会自动重新创建它。
 * **HEADLESS**:
-  * `false`: 脚本运行时会弹出一个 Chrome 窗口，你可以看到它在做什么。
-  * `true`: (默认)脚本在后台无头运行，界面不可见（适合只想静默完成任务时开启）。
+  * `false`: (默认)脚本运行时会弹出一个 Chrome 窗口，你可以看到它在做什么。
+  * `true`: 脚本在后台无头运行，界面不可见（适合只想静默完成任务时开启）。
 
 ### 3. 运行脚本
 
@@ -126,8 +129,9 @@ node renew.js
 
 ## 🛠️ 项目结构
 
-* `renew.js`: Windows 本地运行的主程序。
-* `action_renew.js`: 专门用于 GitHub Actions 环境的脚本（适配 Linux/Headless），支持随机延迟和 sing-box 代理。
-* `proxy_handler.py`: 代理协议解析器，将 vmess/vless/hy2/tuic/socks5 等协议转换为 sing-box 配置。
+* `action_renew.py`: **GitHub Actions CI 主入口**（DrissionPage），含 ALTCHA PoW 离线求解、Telegram 推送与日志脱敏。
+* `proxy_handler.py`: 代理协议解析器，将 vmess/vless/hy2/tuic/socks5 等协议转换为 sing-box 配置（`tests/` 含单元测试）。
 * `.github/workflows/renew.yml`: GitHub Actions 的定时任务配置文件。
-* `login.json`: (需手动创建) 存放本地运行的账号信息。
+* `renew.js`: Windows 本地运行的 Node.js 版主程序。
+* `action_renew.js`: Node.js 备选版（适配 Linux/Headless），支持随机延迟和 sing-box 代理；CI 当前未使用。
+* `login.json`: (需手动创建) 存放本地运行的账号信息，已被 `.gitignore` 忽略。

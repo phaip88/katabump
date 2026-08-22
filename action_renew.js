@@ -11,6 +11,19 @@ const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
 const GITHUB_EVENT_NAME = process.env.GITHUB_EVENT_NAME || '';
 
+// 日志脱敏：a***b@example.com
+function maskUsername(username) {
+    if (!username) return 'unknown';
+    const at = username.indexOf('@');
+    if (at > 0) {
+        const name = username.slice(0, at);
+        const m = name.length <= 2 ? name[0] + '*' : name[0] + '*'.repeat(name.length - 2) + name[name.length - 1];
+        return `${m}${username.slice(at)}`;
+    }
+    if (username.length <= 2) return username[0] + '*';
+    return username[0] + '*'.repeat(username.length - 2) + username[username.length - 1];
+}
+
 // Anti-detection: scheduled runs get 0-3h random delay; manual runs skip delay
 const SINGBOX_LOCAL_PROXY = 'http://127.0.0.1:8080';
 
@@ -820,26 +833,26 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                     const errorMsg = page.getByText('Incorrect password or no account');
                     const captchaError = page.getByText('Please complete captcha');
                     if (await errorMsg.isVisible({ timeout: 2000 })) {
-                        console.error(` >> ❌ 登录失败: 用户 ${user.username} 账号或密码错误`);
+                        console.error(` >> ❌ 登录失败: 用户 ${maskUsername(user.username)} 账号或密码错误`);
                         const failPhotoDir = path.join(process.cwd(), 'screenshots');
                         if (!fs.existsSync(failPhotoDir)) fs.mkdirSync(failPhotoDir, { recursive: true });
                         const failSafeName = user.username.replace(/[^a-z0-9]/gi, '_');
                         const failShotPath = path.join(failPhotoDir, `${failSafeName}_login_fail.png`);
                         try { await page.screenshot({ path: failShotPath, fullPage: true }); } catch (e) { }
 
-                        telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${user.username}\n原因: 账号或密码错误`, failShotPath)) || telegramNotified;
+                        telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${maskUsername(user.username)}\n原因: 账号或密码错误`, failShotPath)) || telegramNotified;
                         continue;
                     }
                     
                     if (await captchaError.isVisible({ timeout: 2000 })) {
-                        console.error(` >> ❌ 登录失败: 用户 ${user.username} 需要过盾 (Please complete captcha.)`);
+                        console.error(` >> ❌ 登录失败: 用户 ${maskUsername(user.username)} 需要过盾 (Please complete captcha.)`);
                         const failPhotoDir = path.join(process.cwd(), 'screenshots');
                         if (!fs.existsSync(failPhotoDir)) fs.mkdirSync(failPhotoDir, { recursive: true });
                         const failSafeName = user.username.replace(/[^a-z0-9]/gi, '_');
                         const failShotPath = path.join(failPhotoDir, `${failSafeName}_captcha_fail.png`);
                         try { await page.screenshot({ path: failShotPath, fullPage: true }); } catch (e) { }
 
-                        telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${user.username}\n原因: Turnstile 验证未通过`, failShotPath)) || telegramNotified;
+                        telegramNotified = (await sendTelegramMessage(`❌ 登录失败\n用户: ${maskUsername(user.username)}\n原因: Turnstile 验证未通过`, failShotPath)) || telegramNotified;
                         continue;
                     }
                 } catch (e) { }
@@ -864,7 +877,7 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                 }
                 telegramNotified = (await sendTelegramMessage(
                     `⚠️ 处理未完成
-用户: ${user.username}
+用户: ${maskUsername(user.username)}
 原因: 未找到 See 链接`,
                     seeFailShot
                 )) || telegramNotified;
@@ -954,8 +967,6 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                     if (await confirmBtn.isVisible()) {
 
                         // User Requested: Screenshot BEFORE final click
-                        const fs = require('fs');
-                        const path = require('path');
                         const photoDir = path.join(process.cwd(), 'screenshots');
                         if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
                         const safeUser = user.username.replace(/[^a-z0-9]/gi, '_');
@@ -989,15 +1000,13 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                                     console.log(`   >> ⏳ 暂无法续期。下次可用时间: ${dateStr}`);
 
                                     // 截图证明
-                                    const fs = require('fs');
-                                    const path = require('path');
                                     const photoDir = path.join(process.cwd(), 'screenshots');
                                     if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
                                     const safeUser = user.username.replace(/[^a-z0-9]/gi, '_');
                                     const skipShotPath = path.join(photoDir, `${safeUser}_skip.png`);
                                     try { await page.screenshot({ path: skipShotPath, fullPage: true }); } catch (e) { }
 
-                                    telegramNotified = (await sendTelegramMessage(`⏳ 暂无法续期（跳过）\n用户: ${user.username}\n原因: 还没到时间\n下次可用: ${dateStr}`, skipShotPath)) || telegramNotified;
+                                    telegramNotified = (await sendTelegramMessage(`⏳ 暂无法续期（跳过）\n用户: ${maskUsername(user.username)}\n原因: 还没到时间\n下次可用: ${dateStr}`, skipShotPath)) || telegramNotified;
 
                                     renewSuccess = true; // Mark as done to stop retries
                                     try {
@@ -1025,15 +1034,13 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
                             console.log('   >> ✅ Modal closed. Renew successful!');
 
                             // 截图成功状态
-                            const fs = require('fs');
-                            const path = require('path');
                             const photoDir = path.join(process.cwd(), 'screenshots');
                             if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
                             const safeUser = user.username.replace(/[^a-z0-9]/gi, '_');
                             const successShotPath = path.join(photoDir, `${safeUser}_success.png`);
                             try { await page.screenshot({ path: successShotPath, fullPage: true }); } catch (e) { }
 
-                            telegramNotified = (await sendTelegramMessage(`✅ 续期成功\n用户: ${user.username}\n状态: 服务器已成功续期！`, successShotPath)) || telegramNotified;
+                            telegramNotified = (await sendTelegramMessage(`✅ 续期成功\n用户: ${maskUsername(user.username)}\n状态: 服务器已成功续期！`, successShotPath)) || telegramNotified;
                             renewSuccess = true;
                             break;
                         } else {
@@ -1060,8 +1067,6 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
 
         // Snapshot before handling next user
         // In GitHub Actions, we save to 'screenshots' dir
-        const fs = require('fs');
-        const path = require('path');
         const photoDir = path.join(process.cwd(), 'screenshots');
         if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
         // Use safe filename
@@ -1076,7 +1081,7 @@ async function solveAltchaIfPresent(page, stageName = "Renew阶段", maxAttempts
 
         if (!telegramNotified) {
             telegramNotified = await sendTelegramMessage(
-                `ℹ️ 用户处理完成\n用户: ${user.username}\n状态: 未识别到明确的续期成功、登录失败或等待续期结果，请查看截图。`,
+                `ℹ️ 用户处理完成\n用户: ${maskUsername(user.username)}\n状态: 未识别到明确的续期成功、登录失败或等待续期结果，请查看截图。`,
                 screenshotPath
             );
         }
