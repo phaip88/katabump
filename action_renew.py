@@ -461,9 +461,29 @@ def main():
         print("⚠️ USERS_JSON 未提供或解析失败！")
         return
 
+    # 条目校验：缺 username/password 的记录会导致后续崩溃，直接跳过
+    valid_users = []
+    for idx, user in enumerate(users):
+        if isinstance(user, dict) and user.get('username') and user.get('password'):
+            valid_users.append(user)
+        else:
+            print(f"⚠️ 跳过无效条目 #{idx + 1}（缺少 username 或 password）")
+    skipped = len(users) - len(valid_users)
+    if skipped:
+        print(f"共跳过 {skipped}/{len(users)} 条无效条目")
+    if not valid_users:
+        print("⚠️ USERS_JSON 中没有有效条目！")
+        return
+    users = valid_users
+
     failed_users = []
     for user in users:
-        success = process_user(user)
+        try:
+            success = process_user(user)
+        except Exception as e:
+            safe_e = sanitize_log(e)
+            print(f"单账号处理崩溃（已隔离，不影响后续账号）: {safe_e}")
+            success = False
         if not success:
             failed_users.append(mask_username(user.get('username')))
         time.sleep(2)
