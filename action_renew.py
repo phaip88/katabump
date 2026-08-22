@@ -282,8 +282,8 @@ def process_user(user):
         pwd_ele = page.ele('css:input[type="password"]')
         if pwd_ele:
             pwd_ele.input(password, clear=True)
-            
-        time.sleep(2)
+
+        time.sleep(1)
         
         if page.ele("text:Troubleshoot", timeout=1):
             print("检测到 Troubleshoot 封禁页面！")
@@ -308,16 +308,15 @@ def process_user(user):
             
             print("点击 Login 按钮...")
             login_btn.click()
-            time.sleep(3)
 
-        if page.ele("text:Please complete captcha", timeout=3):
+        if page.ele("text:Please complete captcha", timeout=5):
             print("登录失败: 要求人机验证 (Please complete captcha)")
             screenshot_path = f"screenshots/{safe_user}_captcha_fail.png"
             page.get_screenshot(path=screenshot_path)
             send_tg_message(f"⚠️ 登录失败 (需过盾)\n用户: {masked_u}", screenshot_path)
             return False
 
-        if page.ele("text:These credentials do not match", timeout=1):
+        if page.ele("text:These credentials do not match", timeout=2):
             print("登录失败: 密码或账号错误")
             send_tg_message(f"⚠️ 登录失败 (账号密码错误)\n用户: {masked_u}")
             return False
@@ -343,8 +342,6 @@ def process_user(user):
             send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 未找到 Renew 按钮")
             return False
 
-        time.sleep(2)
-        
         not_time = page.ele("text:You can't renew your server yet", timeout=2)
         if not_time:
             txt = not_time.text
@@ -408,18 +405,25 @@ def process_user(user):
                 pass
         
         print("等待续期结果与页面状态更新...")
-        time.sleep(6)
-        
+        # 轮询等待结果出现（典型 1-2 秒内返回），最坏预算与原固定 sleep(6)+检查相当
+        captcha_err = None
+        not_time = None
+        for _ in range(6):
+            captcha_err = page.ele("text:Please complete the captcha to continue", timeout=0.5)
+            not_time = captcha_err or page.ele("text:You can't renew your server yet", timeout=0.5)
+            if captcha_err or not_time:
+                break
+            time.sleep(0.5)
+
         final_path = f"screenshots/{safe_user}_success.png"
         page.get_screenshot(path=final_path)
 
-        if page.ele("text:Please complete the captcha to continue", timeout=1):
+        if captcha_err:
             print("⚠️ 确认时遭遇 Captcha 错误。")
             send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 确认阶段提示 Captcha 错误", final_path)
             return False
 
-        # 提取最后提交后官方提示文本（例如：未至续期时间 / 下次可用时间）
-        post_prompt = page.ele("text:You can't renew your server yet", timeout=2)
+        post_prompt = not_time
         if post_prompt:
             txt = post_prompt.text
             match = re.search(r'as of\s+(.*?)\s+\(', txt)
@@ -476,6 +480,21 @@ def main():
         return
     users = valid_users
 
+    # 去重：同一邮箱只处理一次（忽略大小写与首尾空白）
+    seen = set()
+    unique_users = []
+    for user in valid_users:
+        key = user['username'].strip().lower()
+        if key in seen:
+            print(f"⚠️ 跳过重复账号: {mask_username(user['username'])}")
+            continue
+        seen.add(key)
+        unique_users.append(user)
+    dup = len(valid_users) - len(unique_users)
+    if dup:
+        print(f"共跳过 {dup} 个重复账号")
+    users = unique_users
+
     failed_users = []
     for user in users:
         try:
@@ -486,7 +505,7 @@ def main():
             success = False
         if not success:
             failed_users.append(mask_username(user.get('username')))
-        time.sleep(2)
+        time.sleep(0.5)
     
     if len(failed_users) == len(users) and len(users) > 0:
         print("\n❌ 所有账号续期均失败，退出代码 1")
@@ -499,8 +518,8 @@ def main():
 
 if __name__ == "__main__":
     if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
-        delay = random.randint(0, 3 * 3600)
+        delay = random.randint(0, 10 * 60)
         print(f"[Anti-Detection] Scheduled run: 延迟 {delay} 秒...")
         time.sleep(delay)
-    
+
     main()

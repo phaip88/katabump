@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read # 最小权限：任务只读代码，不需要写仓库
 
-# 定时任务在 job 内随机延迟最长 3 小时，期间手动触发会产生并发，
+# 定时任务在 job 内随机延迟最长 10 分钟，期间手动触发仍可能并发，
 # 两个实例同时操作同一批账号有风控风险，这里强制串行并取消旧任务
 concurrency:
   group: katabump-renew
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   renew:
     runs-on: windows-latest
-    timeout-minutes: 240 # 覆盖最大随机延迟 180min + 浏览器执行时间，防止 Chrome 挂起烧满默认 360min
+    timeout-minutes: 120 # 覆盖最大随机延迟 10min + 多账号执行时间，防止 Chrome 挂起空烧
 
     steps:
       - uses: actions/checkout@v4
