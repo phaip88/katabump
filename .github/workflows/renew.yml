@@ -5,9 +5,19 @@ on:
     - cron: '0 2 * * *' # UTC 02:00 = 北京时间 10:00
   workflow_dispatch:
 
+permissions:
+  contents: read # 最小权限：任务只读代码，不需要写仓库
+
+# 定时任务在 job 内随机延迟最长 3 小时，期间手动触发会产生并发，
+# 两个实例同时操作同一批账号有风控风险，这里强制串行并取消旧任务
+concurrency:
+  group: katabump-renew
+  cancel-in-progress: true
+
 jobs:
   renew:
     runs-on: windows-latest
+    timeout-minutes: 240 # 覆盖最大随机延迟 180min + 浏览器执行时间，防止 Chrome 挂起烧满默认 360min
 
     steps:
       - uses: actions/checkout@v4
@@ -16,11 +26,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install DrissionPage==4.1.1.4 requests==2.32.3
+          pip install -r requirements.txt
         shell: powershell
 
       - name: Start Proxy and Run Renew Script
