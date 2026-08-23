@@ -124,9 +124,8 @@ def solve_turnstile(page, timeout_sec=30):
 
     clicked = False
     for i in range(timeout_sec):
-        step = "start"
         try:
-            # 优先检查隐藏 input 的 value（覆盖无可见复选框的 invisible 模式）
+            # 优先: 隐藏 input 的 value（invisible 模式），再试 turnstile.getResponse()
             hidden_val = page.run_js(
                 "try { var i=document.querySelector('input[name=cf-turnstile-response]'); return i?i.value:null } catch(e){return null}")
             turnstileResponse = page.run_js("try { return turnstile.getResponse() } catch(e) { return null }")
@@ -137,86 +136,30 @@ def solve_turnstile(page, timeout_sec=30):
                 print(f"[TS] 已拿到 token (len={len(turnstileResponse)})")
                 return True
 
-            challengeSolution = page.ele("@name=cf-turnstile-response", timeout=1)
-            if not challengeSolution:
-                step = "no-input"
-                time.sleep(1)
-                continue
-
-            challengeButton = None
-            patch_ctx = None
-
-            # 策略1: response input -> 父元素 -> shadow iframe
-            try:
-                ci = challengeSolution.parent().shadow_root.ele("tag:iframe", timeout=1)
-                body = ci.ele("tag:body", timeout=1).shadow_root
-                challengeButton = body.ele("tag:input", timeout=1) \
-                    or body.ele("css:input[type=checkbox]", timeout=1) \
-                    or body.ele("css:div[role=checkbox]", timeout=1)
-                patch_ctx = ci
-                step = "iframe-via-input"
-            except Exception:
-                pass
-
-            # 策略2: .cf-turnstile 容器 -> shadow iframe
+            # 与参考实现一致的定位链（不加 timeout，沿用默认行为）
+            challengeSolution = page.ele("@name=cf-turnstile-response")
+            challengeWrapper = challengeSolution.parent()
+            challengeIframe = challengeWrapper.shadow_root.ele("tag:iframe")
+            challengeIframeBody = challengeIframe.ele("tag:body").shadow_root
+            challengeButton = challengeIframeBody.ele("tag:input")
             if not challengeButton:
-                try:
-                    w = page.ele('css:.cf-turnstile', timeout=1)
-                    ci = w.shadow_root.ele("tag:iframe", timeout=1)
-                    body = ci.ele("tag:body", timeout=1).shadow_root
-                    challengeButton = body.ele("tag:input", timeout=1) \
-                        or body.ele("css:input[type=checkbox]", timeout=1) \
-                        or body.ele("css:div[role=checkbox]", timeout=1)
-                    patch_ctx = ci
-                    step = "iframe-via-widget"
-                except Exception:
-                    pass
+                challengeButton = challengeIframeBody.ele("css:input[type=checkbox]")
 
-            # 策略3: 枚举页面内 cloudflare 子帧，直接在帧内定位
-            if not challengeButton:
-                try:
-                    for f in page.get_frames():
-                        if 'cloudflare' in f.url:
-                            body = f.ele('tag:body', timeout=1).shadow_root
-                            b = body.ele("tag:input", timeout=1) \
-                                or body.ele("css:input[type=checkbox]", timeout=1) \
-                                or body.ele("css:div[role=checkbox]", timeout=1)
-                            if b:
-                                challengeButton = b
-                                patch_ctx = f
-                                step = "frame"
-                                break
-                except Exception as e:
-                    print(f"[TS] iter {i}: 枚举子帧失败: {sanitize_log(e)}")
-
-            if not challengeButton:
-                print(f"[TS] iter {i}: 三种策略均未能定位复选框 (step={step})")
-                turnstile_diag(page, f"no-button-{i}")
-                time.sleep(1)
-                continue
-
-            if patch_ctx:
-                try:
-                    patch_ctx.run_js("""
-                        window.dtp = 1
-                        function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-                        let screenX = getRandomInt(800, 1200);
-                        let screenY = getRandomInt(400, 600);
-                        Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
-                        Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
-                    """)
-                except Exception as e:
-                    print(f"[TS] iter {i}: 注入 screenX/Y 失败: {sanitize_log(e)}")
-
-            print(f"[TS] iter {i}: 点击 Turnstile 复选框 (step={step})")
-            try:
+            if challengeButton:
+                challengeIframe.run_js("""
+                    window.dtp = 1
+                    function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+                    let screenX = getRandomInt(800, 1200);
+                    let screenY = getRandomInt(400, 600);
+                    Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
+                    Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
+                """)
+                print(f"[TS] iter {i}: 点击 Turnstile 复选框")
                 challengeButton.click()
-            except Exception as e:
-                print(f"[TS] iter {i}: click 异常: {sanitize_log(e)}")
-            clicked = True
-            time.sleep(2)
+                clicked = True
         except Exception as e:
-            print(f"[TS] iter {i}: 异常 step={step}: {sanitize_log(e)}")
+            if i % 5 == 0:
+                print(f"[TS] iter {i}: 定位/点击失败: {sanitize_log(e)}")
         time.sleep(1)
 
     print("[TS] 验证超时。")
