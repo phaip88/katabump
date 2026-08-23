@@ -136,27 +136,40 @@ def solve_turnstile(page, timeout_sec=30):
                 print(f"[TS] 已拿到 token (len={len(turnstileResponse)})")
                 return True
 
-            # 与参考实现一致的定位链（不加 timeout，沿用默认行为）
+            # 定位链：隐藏 input -> 父元素 -> shadow iframe（仅 classic 变体存在）
+            # katabump 用的是 data-size="flexible" 的 invisible 变体，组件内
+            # 没有可点击的复选框 iframe，只能等 Cloudflare 后台把 token 写进 input
             challengeSolution = page.ele("@name=cf-turnstile-response")
-            challengeWrapper = challengeSolution.parent()
-            challengeIframe = challengeWrapper.shadow_root.ele("tag:iframe")
-            challengeIframeBody = challengeIframe.ele("tag:body").shadow_root
-            challengeButton = challengeIframeBody.ele("tag:input")
-            if not challengeButton:
-                challengeButton = challengeIframeBody.ele("css:input[type=checkbox]")
+            challengeIframe = None
+            try:
+                wrapper = challengeSolution.parent()
+                sr = wrapper.shadow_root
+                if sr:
+                    challengeIframe = sr.ele("tag:iframe")
+            except Exception as e:
+                print(f"[TS] iter {i}: 定位 iframe 失败: {sanitize_log(e)}")
 
-            if challengeButton:
-                challengeIframe.run_js("""
-                    window.dtp = 1
-                    function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-                    let screenX = getRandomInt(800, 1200);
-                    let screenY = getRandomInt(400, 600);
-                    Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
-                    Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
-                """)
-                print(f"[TS] iter {i}: 点击 Turnstile 复选框")
-                challengeButton.click()
-                clicked = True
+            if challengeIframe:
+                try:
+                    challengeIframeBody = challengeIframe.ele("tag:body").shadow_root
+                    challengeButton = challengeIframeBody.ele("tag:input") \
+                        or challengeIframeBody.ele("css:input[type=checkbox]")
+                except Exception:
+                    challengeButton = None
+                if challengeButton:
+                    challengeIframe.run_js("""
+                        window.dtp = 1
+                        function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+                        let screenX = getRandomInt(800, 1200);
+                        let screenY = getRandomInt(400, 600);
+                        Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
+                        Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
+                    """)
+                    print(f"[TS] iter {i}: 点击 Turnstile 复选框")
+                    challengeButton.click()
+                    clicked = True
+            elif i % 5 == 0:
+                print(f"[TS] iter {i}: 无可见复选框（invisible/flexible 变体），等待后台下发 token")
         except Exception as e:
             if i % 5 == 0:
                 print(f"[TS] iter {i}: 定位/点击失败: {sanitize_log(e)}")
@@ -168,8 +181,9 @@ def solve_turnstile(page, timeout_sec=30):
         print("[TS] 已点击复选框但 token 仍未返回：常见原因是出口 IP 被风控 "
               "(数据中心 IP / 前置盾)，可检查代理是否为住宅/干净 IP")
     else:
-        print("[TS] 全程未成功点击复选框：多半是 shadow DOM 遍历失败 "
-              "(DrissionPage 版本与 Chrome 不兼容，或组件结构已变)")
+        print("[TS] 全程未拿到 token：katabump 用 invisible/flexible 变体，组件内无复选框可点，"
+              "只能等 Cloudflare 后台下发，而本环境未签发（respValLen=0）。"
+              "首要嫌疑是代理出口为数据中心 IP / 自动化被识别，建议换住宅或干净 IP。")
     return False
 
 def handle_altcha(page):
