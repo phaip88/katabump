@@ -145,9 +145,10 @@ def click_turnstile_shadow_input(page):
     if not iframe:
         return False
 
-    # 3. 注入 MouseEvent 坐标补丁（绕过 screenX/screenY 检测）
+    # 3. 注入 MouseEvent 坐标补丁 + webdriver 伪装（绕过 screenX/screenY 检测）
     try:
         iframe.run_js("""
+            try { Object.defineProperty(navigator, 'webdriver', { get: () => false }); } catch(e) {}
             function getRandomInt(min, max) {
                 return Math.floor(Math.random() * (max - min + 1)) + min;
             }
@@ -357,6 +358,20 @@ def handle_altcha(page):
         print(f"处理 Altcha 发生异常: {sanitize_log(e)}")
     return False
 
+# 反自动化检测注入脚本：在文档加载前运行，抹除 webdriver 痕迹、
+# 随机化 MouseEvent screenX/Y（绕过 Turnstile 坐标检测）、伪装语言。
+STEALTH_INIT_JS = """
+(function() {
+  try { Object.defineProperty(navigator, 'webdriver', { get: () => false }); } catch (e) {}
+  try { Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] }); } catch (e) {}
+  try {
+    function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+    Object.defineProperty(MouseEvent.prototype, 'screenX', { value: getRandomInt(800, 1200) });
+    Object.defineProperty(MouseEvent.prototype, 'screenY', { value: getRandomInt(400, 600) });
+  } catch (e) {}
+})();
+"""
+
 def create_browser():
     """创建并配置独立的 Chromium 实例，确保账号间 Session 完全隔离"""
     co = ChromiumOptions()
@@ -365,13 +380,18 @@ def create_browser():
     if os.path.exists(EXTENSION_PATH):
         co.add_extension(EXTENSION_PATH)
         print(f"Loaded Turnstile CDP extension from {EXTENSION_PATH}")
-    
+
     if PROXY_SERVER:
         co.set_proxy(PROXY_SERVER)
         print(f"Using proxy: {PROXY_SERVER}")
-        
+
     co.set_argument('--disable-blink-features=AutomationControlled')
     co.set_argument('--start-maximized')
+    co.set_argument('--no-first-run')
+    co.set_argument('--no-default-browser-check')
+    co.set_argument('--disable-infobars')
+    co.set_argument('--lang=en-US')
+    co.set_argument('--disable-popup-blocking')
     return Chromium(co)
 
 def process_user(user):
@@ -387,6 +407,11 @@ def process_user(user):
     try:
         browser = create_browser()
         page = browser.latest_tab
+        try:
+            page.add_init_js(STEALTH_INIT_JS)
+            print("[stealth] 已注入反自动化检测脚本")
+        except Exception as e:
+            print(f"[stealth] 注入失败(可忽略): {sanitize_log(e)}")
         page.get("https://dashboard.katabump.com/auth/login", timeout=60)
         
         # 5秒盾前置检测
