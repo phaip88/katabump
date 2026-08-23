@@ -79,35 +79,84 @@ def solve_altcha_pow(challenge_data):
         print(f"Altcha PoW 求解出错: {sanitize_log(e)}")
     return None
 
-def solve_turnstile(page, timeout_sec=25):
+def turnstile_diag(page, tag):
+    """抓取页面与 Turnstile 组件的关键状态，便于定位卡点。"""
+    try:
+        info = page.run_js("""(() => {
+            const out = { title: document.title, url: location.href };
+            out.justMoment = document.title.includes('Just a moment') || !!document.querySelector('#challenge-running');
+            const w = document.querySelector('.cf-turnstile');
+            out.widget = !!w;
+            if (w) {
+                out.widgetHTML = (w.outerHTML || '').slice(0, 260);
+                const sr = w.shadowRoot;
+                out.shadowIframe = !!(sr && sr.querySelector('iframe'));
+            }
+            const resp = document.querySelector('input[name="cf-turnstile-response"]');
+            out.respInput = !!resp;
+            if (resp) out.respValLen = (resp.value || '').length;
+            out.iframeCount = document.querySelectorAll('iframe').length;
+            try { out.tsResp = (typeof turnstile !== 'undefined' && turnstile.getResponse && turnstile.getResponse()) ? 'present' : 'null'; }
+            catch (e) { out.tsResp = 'err:' + e.message; }
+            return out;
+        })()""")
+        print(f"[TS:{tag}] {info}")
+    except Exception as e:
+        print(f"[TS:{tag}] 诊断失败: {sanitize_log(e)}")
+
+
+def solve_turnstile(page, timeout_sec=30):
+    print("开始检测 Turnstile...")
+    turnstile_diag(page, "init")
+
     ts_exists = page.ele('@name=cf-turnstile-response', timeout=2) or page.ele('css:.cf-turnstile', timeout=1)
     if not ts_exists:
+        print("[TS] 页面未找到 cf-turnstile 组件（可能前置盾尚未渲染 / 未加载此组件）")
+        turnstile_diag(page, "no-turnstile")
         return False
 
-    print("开始检测并尝试处理 Turnstile...")
     try:
         page.run_js("try { turnstile.reset() } catch(e) { }")
-    except:
-        pass
+    except Exception as e:
+        print(f"[TS] turnstile.reset 异常(可忽略): {sanitize_log(e)}")
 
+    clicked = False
     for i in range(timeout_sec):
+        step = "start"
         try:
             turnstileResponse = page.run_js("try { return turnstile.getResponse() } catch(e) { return null }")
             if turnstileResponse and len(turnstileResponse) > 20:
-                print("Turnstile 验证已通过！")
+                print(f"[TS] 已拿到 token (len={len(turnstileResponse)})")
                 return True
-            
+
             challengeSolution = page.ele("@name=cf-turnstile-response", timeout=1)
             if not challengeSolution:
+                step = "no-input"
                 time.sleep(1)
                 continue
 
-            challengeWrapper = challengeSolution.parent()
-            challengeIframe = challengeWrapper.shadow_root.ele("tag:iframe", timeout=1)
+            # 策略1: response input -> 父元素 -> shadow iframe
+            challengeIframe = None
+            try:
+                challengeIframe = challengeSolution.parent().shadow_root.ele("tag:iframe", timeout=1)
+                step = "iframe-via-input"
+            except Exception:
+                pass
+            # 策略2: 直接经由 .cf-turnstile 容器 shadow iframe
             if not challengeIframe:
+                try:
+                    w = page.ele('css:.cf-turnstile', timeout=1)
+                    challengeIframe = w.shadow_root.ele("tag:iframe", timeout=1)
+                    step = "iframe-via-widget"
+                except Exception:
+                    pass
+
+            if not challengeIframe:
+                print(f"[TS] iter {i}: 无法定位 Turnstile iframe (step={step})")
+                turnstile_diag(page, f"no-iframe-{i}")
                 time.sleep(1)
                 continue
-            
+
             challengeIframe.run_js("""
                 window.dtp = 1
                 function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -116,18 +165,42 @@ def solve_turnstile(page, timeout_sec=25):
                 Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
                 Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
             """)
-            
-            challengeIframeBody = challengeIframe.ele("tag:body", timeout=1).shadow_root
-            challengeButton = challengeIframeBody.ele("tag:input", timeout=1)
+
+            challengeButton = None
+            try:
+                body = challengeIframe.ele("tag:body", timeout=1).shadow_root
+                step = "body"
+                challengeButton = (
+                    body.ele("tag:input", timeout=1)
+                    or body.ele("css:input[type=checkbox]", timeout=1)
+                    or body.ele("css:div[role=checkbox]", timeout=1)
+                )
+            except Exception as e:
+                print(f"[TS] iter {i}: 定位复选框失败 (step={step}): {sanitize_log(e)}")
+
             if challengeButton:
-                print("点击 Turnstile Checkbox...")
-                challengeButton.click()
+                print(f"[TS] iter {i}: 点击 Turnstile 复选框 (step={step})")
+                try:
+                    challengeButton.click()
+                except Exception as e:
+                    print(f"[TS] iter {i}: click 异常: {sanitize_log(e)}")
+                clicked = True
                 time.sleep(2)
-        except Exception:
-            pass
+            else:
+                print(f"[TS] iter {i}: iframe 内未找到复选框元素 (step={step})")
+                turnstile_diag(page, f"no-button-{i}")
+        except Exception as e:
+            print(f"[TS] iter {i}: 异常 step={step}: {sanitize_log(e)}")
         time.sleep(1)
-    
-    print("Turnstile 验证超时！")
+
+    print("[TS] 验证超时。")
+    turnstile_diag(page, "timeout")
+    if clicked:
+        print("[TS] 已点击复选框但 token 仍未返回：常见原因是出口 IP 被风控 "
+              "(数据中心 IP / 前置盾)，可检查代理是否为住宅/干净 IP")
+    else:
+        print("[TS] 全程未成功点击复选框：多半是 shadow DOM 遍历失败 "
+              "(DrissionPage 版本与 Chrome 不兼容，或组件结构已变)")
     return False
 
 def handle_altcha(page):
@@ -270,10 +343,13 @@ def process_user(user):
         page.get("https://dashboard.katabump.com/auth/login", timeout=60)
         
         # 5秒盾前置检测
+        print(f"[login] 进入登录页: title={page.title!r} url={page.url}")
         if "Just a moment" in page.title or page.ele('#challenge-running', timeout=2):
             print("检测到 Cloudflare 5秒前置盾，等待通过...")
             page.wait.ele_loaded('css:input[type="email"]', timeout=30)
             print("5秒前置盾已通过")
+        else:
+            print("[login] 无 5 秒前置盾（直接是登录表单或已进 Turnstile 阶段）")
 
         email_ele = page.ele('css:input[type="email"]')
         if email_ele:
