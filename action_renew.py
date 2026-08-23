@@ -107,6 +107,93 @@ def turnstile_diag(page, tag):
         print(f"[TS:{tag}] 诊断失败: {sanitize_log(e)}")
 
 
+def click_turnstile_shadow_input(page):
+    """多策略定位并点击 Turnstile 复选框（移植自 JustRunMy.App 方案）。
+    返回 True 表示已执行点击；False 表示未找到可点击目标（invisible 变体常见）。"""
+    iframe = None
+
+    # 1. 通过响应隐藏域父级查找 iframe（classic 变体）
+    try:
+        challenge_solution = page.ele("@name=cf-turnstile-response", timeout=2)
+        if challenge_solution:
+            challenge_wrapper = challenge_solution.parent()
+            if challenge_wrapper:
+                sr = getattr(challenge_wrapper, "shadow_root", None)
+                if sr:
+                    iframe = sr.ele("tag:iframe", timeout=2)
+                if not iframe:
+                    iframe = challenge_wrapper.ele("tag:iframe", timeout=2)
+    except Exception:
+        iframe = None
+
+    # 2. 回退到按 src 匹配 Turnstile / Cloudflare iframe
+    if not iframe:
+        for selector in (
+            'xpath://iframe[contains(@src, "cloudflare") or contains(@src, "turnstile") or contains(@src, "challenge")]',
+            'css:iframe[src*="challenges.cloudflare.com"]',
+            'css:iframe[src*="turnstile"]',
+            'tag:iframe',
+        ):
+            try:
+                found = page.ele(selector, timeout=2)
+                if found:
+                    iframe = found
+                    break
+            except Exception:
+                continue
+
+    if not iframe:
+        return False
+
+    # 3. 注入 MouseEvent 坐标补丁（绕过 screenX/screenY 检测）
+    try:
+        iframe.run_js("""
+            function getRandomInt(min, max) {
+                return Math.floor(Math.random() * (max - min + 1)) + min;
+            }
+            Object.defineProperty(MouseEvent.prototype, 'screenX', { value: getRandomInt(800, 1200) });
+            Object.defineProperty(MouseEvent.prototype, 'screenY', { value: getRandomInt(400, 600) });
+        """)
+    except Exception:
+        pass
+
+    # 4. 在 iframe 中定位并点击 checkbox
+    challenge_button = None
+    try:
+        challenge_body = iframe.ele("tag:body", timeout=2)
+        if challenge_body:
+            body_sr = getattr(challenge_body, "shadow_root", None)
+            if body_sr:
+                challenge_button = body_sr.ele("tag:input", timeout=2) \
+                    or body_sr.ele("css:input[type=checkbox]", timeout=2)
+            if not challenge_button:
+                challenge_button = challenge_body.ele("tag:input", timeout=2) \
+                    or challenge_body.ele("css:input[type=checkbox]", timeout=2)
+    except Exception:
+        pass
+
+    if not challenge_button:
+        try:
+            challenge_button = iframe.ele("tag:input", timeout=2) \
+                or iframe.ele("css:input[type=checkbox]", timeout=2)
+        except Exception:
+            pass
+
+    if challenge_button:
+        challenge_button.click()
+        print("  已执行 Turnstile checkbox 点击")
+        return True
+    else:
+        try:
+            iframe.click()
+            print("  已执行 Turnstile iframe 点击")
+            return True
+        except Exception:
+            pass
+
+    return False
+
+
 def solve_turnstile(page, timeout_sec=30):
     print("开始检测 Turnstile...")
     turnstile_diag(page, "init")
@@ -123,6 +210,7 @@ def solve_turnstile(page, timeout_sec=30):
         print(f"[TS] turnstile.reset 异常(可忽略): {sanitize_log(e)}")
 
     clicked = False
+    next_click_at = 0
     for i in range(timeout_sec):
         try:
             # 优先: 隐藏 input 的 value（invisible 模式），再试 turnstile.getResponse()
@@ -136,40 +224,16 @@ def solve_turnstile(page, timeout_sec=30):
                 print(f"[TS] 已拿到 token (len={len(turnstileResponse)})")
                 return True
 
-            # 定位链：隐藏 input -> 父元素 -> shadow iframe（仅 classic 变体存在）
-            # katabump 用的是 data-size="flexible" 的 invisible 变体，组件内
-            # 没有可点击的复选框 iframe，只能等 Cloudflare 后台把 token 写进 input
-            challengeSolution = page.ele("@name=cf-turnstile-response")
-            challengeIframe = None
-            try:
-                wrapper = challengeSolution.parent()
-                sr = wrapper.shadow_root
-                if sr:
-                    challengeIframe = sr.ele("tag:iframe")
-            except Exception as e:
-                print(f"[TS] iter {i}: 定位 iframe 失败: {sanitize_log(e)}")
-
-            if challengeIframe:
-                try:
-                    challengeIframeBody = challengeIframe.ele("tag:body").shadow_root
-                    challengeButton = challengeIframeBody.ele("tag:input") \
-                        or challengeIframeBody.ele("css:input[type=checkbox]")
-                except Exception:
-                    challengeButton = None
-                if challengeButton:
-                    challengeIframe.run_js("""
-                        window.dtp = 1
-                        function getRandomInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-                        let screenX = getRandomInt(800, 1200);
-                        let screenY = getRandomInt(400, 600);
-                        Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
-                        Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
-                    """)
-                    print(f"[TS] iter {i}: 点击 Turnstile 复选框")
-                    challengeButton.click()
+            # 多策略定位并点击复选框（移植自 JustRunMy.App）。
+            # invisible/flexible 变体无复选框时返回 False，此时只能等
+            # Cloudflare 后台把 token 写进隐藏 input；节流为每 5 秒尝试一次。
+            if time.time() >= next_click_at:
+                if click_turnstile_shadow_input(page):
+                    print(f"[TS] iter {i}: 已执行 Turnstile 点击")
                     clicked = True
-            elif i % 5 == 0:
-                print(f"[TS] iter {i}: 无可见复选框（invisible/flexible 变体），等待后台下发 token")
+                elif i % 5 == 0:
+                    print(f"[TS] iter {i}: 暂无可点击目标（invisible/flexible 变体），等待后台下发 token")
+                next_click_at = time.time() + 5
         except Exception as e:
             if i % 5 == 0:
                 print(f"[TS] iter {i}: 定位/点击失败: {sanitize_log(e)}")
