@@ -1,2 +1,2 @@
-DrissionPage==4.1.1.4
+DrissionPage
 requests==2.32.3
