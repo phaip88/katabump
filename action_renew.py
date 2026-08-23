@@ -556,9 +556,14 @@ def process_user(user):
         # 轮询等待结果出现（典型 1-2 秒内返回），最坏预算与原固定 sleep(6)+检查相当
         captcha_err = None
         not_time = None
+        not_time_text = ""
         for _ in range(6):
             captcha_err = page.ele("text:Please complete the captcha to continue", timeout=0.5)
-            not_time = captcha_err or page.ele("text:You can't renew your server yet", timeout=0.5)
+            # 用页面文本子串匹配，避免 text: 精确匹配漏掉更长的提示语
+            body_txt = (page_text(page) or "").lower()
+            if "renew your server yet" in body_txt:
+                not_time = True
+                not_time_text = page_text(page)
             if captcha_err or not_time:
                 break
             time.sleep(0.5)
@@ -571,9 +576,8 @@ def process_user(user):
             send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 确认阶段提示 Captcha 错误", final_path)
             return False
 
-        post_prompt = not_time
-        if post_prompt:
-            txt = post_prompt.text
+        if not_time:
+            txt = not_time_text or "未至续期时间（页面未抓到原文）"
             match = re.search(r'as of\s+(.*?)\s+\(', txt)
             date_str = match.group(1) if match else '待定'
             print(f"官方反馈: {txt}")
