@@ -41,6 +41,33 @@ def mask_username(username):
         return username[0] + "*"
     return username[0] + "*" * (len(username) - 2) + username[-1]
 
+def page_text(page) -> str:
+    """安全提取整页可见文本（用于子串匹配，避免精确 text: 漏匹配）。"""
+    try:
+        body = page.ele("tag:body", timeout=2)
+        return (body.text or "") if body else ""
+    except Exception:
+        return ""
+
+def extract_renewal_date(text):
+    """从文本中提取续期相关日期，返回字符串或 None。
+
+    优先匹配 'as of <date>'（未到续期时间的官方提示），
+    其次匹配通用英文日期（如 August 24, 2026 / 24 August 2026）。
+    """
+    if not text:
+        return None
+    m = re.search(r'as of\s+([^()\n]+?)\s*\(', text)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r'as of\s+(.+)', text)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r'\b([A-Za-z]{3,9}\.?\s+\d{1,2},?\s*\d{4})\b', text)
+    if m:
+        return m.group(1).strip()
+    return None
+
 def send_tg_message(text, photo_path=None):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
@@ -490,16 +517,20 @@ def process_user(user):
             send_tg_message(f"⚠️ 续期失败\n用户: {masked_u}\n原因: 未找到 Renew 按钮")
             return False
 
-        not_time = page.ele("text:You can't renew your server yet", timeout=2)
-        if not_time:
-            txt = not_time.text
-            match = re.search(r'as of\s+(.*?)\s+\(', txt)
-            date_str = match.group(1) if match else '待定'
-            print(f"暂无法续期。下次可用: {date_str}")
+        # 未到续期时间检测（模态框内直接出现提示）
+        not_due_el = page.ele("text:You can't renew your server yet", timeout=2)
+        if not_due_el:
+            raw = not_due_el.text or page_text(page)
+            date_str = extract_renewal_date(raw)
             screenshot_path = f"screenshots/{safe_user}_skip.png"
             page.get_screenshot(path=screenshot_path)
-            send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {masked_u}\n官方提示: {txt}\n下次可用: {date_str}", screenshot_path)
-            return True
+            if date_str:
+                print(f"执行查询成功 续期时间未到 具体续期执行时间为：{date_str}")
+                send_tg_message(f"ℹ️ 续期时间未到\n用户: {masked_u}\n具体续期执行时间为：{date_str}", screenshot_path)
+                return True
+            print("❌ 检测到未到续期时间，但未能解析出具体执行时间")
+            send_tg_message(f"❌ 续期状态异常\n用户: {masked_u}\n官方提示: {raw}\n（未解析到具体续期时间）", screenshot_path)
+            return False
 
         # 处理弹窗内的 Altcha 验证
         handle_altcha(page)
@@ -577,15 +608,24 @@ def process_user(user):
             return False
 
         if not_time:
-            txt = not_time_text or "未至续期时间（页面未抓到原文）"
-            match = re.search(r'as of\s+(.*?)\s+\(', txt)
-            date_str = match.group(1) if match else '待定'
-            print(f"官方反馈: {txt}")
-            send_tg_message(f"ℹ️ 续期状态: 未至续期时间\n用户: {masked_u}\n官方提示: {txt}\n下次可用: {date_str}", final_path)
-            return True
+            # 点击确认后仍提示未到续期时间：按"未到续期时间"分支处理
+            date_str = extract_renewal_date(not_time_text)
+            if date_str:
+                print(f"执行查询成功 续期时间未到 具体续期执行时间为：{date_str}")
+                send_tg_message(f"ℹ️ 续期时间未到\n用户: {masked_u}\n具体续期执行时间为：{date_str}", final_path)
+                return True
+            print("❌ 检测到未到续期时间，但未能解析出具体执行时间")
+            send_tg_message(f"❌ 续期状态异常\n用户: {masked_u}\n官方提示: {not_time_text}\n（未解析到具体续期时间）", final_path)
+            return False
 
-        print("✅ 续期请求处理完成。")
-        send_tg_message(f"✅ 续期成功\n用户: {masked_u}\n状态: 续期请求已提交并确认", final_path)
+        # 续期成功：提取下次续期时间并截图
+        next_date = extract_renewal_date(page_text(page))
+        if next_date:
+            print(f"✅ 续期成功，下次续期的时间为：{next_date}")
+            send_tg_message(f"✅ 续期成功\n用户: {masked_u}\n下次续期的时间为：{next_date}", final_path)
+        else:
+            print("✅ 续期成功（未查询到具体下次续期时间）")
+            send_tg_message(f"✅ 续期成功\n用户: {masked_u}\n（未查询到具体下次续期时间）", final_path)
         return True
             
     except Exception as e:
